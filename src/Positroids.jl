@@ -24,20 +24,14 @@ export decorated_permutations, decorated_excedances,
        PlabicEmbedding, plabic_embedding, graph_faces, graph_trips,
        face_labels, compare_plabic_graphs, InteractivePlabicGraph,
        interactive_plabic_graph, interactive_session, serve_positroids_web,
-       is_orthogonal, orthogonal_dimension, orthogonal_dimensionOfPermutation,
-       is_Omega_symplectic, is_Omega_symplecticTwo,
-       symplectic_Omega_dimension, is_E_symplectic, symplectic_E_dimension,
        right_twist, left_twist, twist_map,
        plucker_coordinates, is_totally_nonnegative, is_totally_positive,
        BridgeParametrization, BoundaryMeasurementParametrization,
        bridge_parametrization, boundary_measurement_parametrization,
        parametrization_matrix, symbolic_matrix, symbolic_plucker_coordinates,
        symbolic_product, parameter_names,
-       twistPerm, untwistPerm, twistNecklace,
-       dimensionOfLGperm, is_cyclo_isotropic,
-       permutationFromCycles, inversionsOfPerm, pminversionsOfPerm,
-       is_codim1_face, is_child, randomMatching, up, iota, iota2, eta
-export immediate_children
+       is_child
+export immediate_children, boundary_cells, boundary_f_vector
 
 function _load_plotting()
     return nothing
@@ -642,9 +636,14 @@ function _relax_disk_layout!(positions, edges, n; iterations=1400,
     return positions
 end
 
+function _orientation(p, q, r)
+    value=(q[2]-p[2])*(r[1]-q[1])-(q[1]-p[1])*(r[2]-q[2])
+    return value>0 ? 1 : value<0 ? -1 : 0
+end
+
 function _proper_edge_crossing(p1, q1, p2, q2)
-    o1 = orientation(p1, q1, p2); o2 = orientation(p1, q1, q2)
-    o3 = orientation(p2, q2, p1); o4 = orientation(p2, q2, q1)
+    o1 = _orientation(p1, q1, p2); o2 = _orientation(p1, q1, q2)
+    o3 = _orientation(p2, q2, p1); o4 = _orientation(p2, q2, q1)
     return o1 != 0 && o2 != 0 && o3 != 0 && o4 != 0 && o1 != o2 && o3 != o4
 end
 
@@ -2403,6 +2402,33 @@ function _measurement_payload(G,request_body;iterations=2500,restarts=12)
                           "plucker_julia"=>plucker_julia,"plucker_m2"=>plucker_m2))
 end
 
+function _facets_payload(G::PlabicGraph;iterations=700,restarts=5)
+    children=immediate_children(G.permutation)
+    thumbnails=Any[]
+    for permutation in children
+        embedding=plabic_embedding(plabic_graph(permutation);
+                                   iterations=iterations,restarts=restarts)
+        H=embedding.graph
+        vertices=[Dict("id"=>i,"x"=>x,"y"=>y,
+                       "color"=>string(H.colors[i]))
+                  for (i,(x,y)) in enumerate(H.positions)]
+        push!(thumbnails,Dict("permutation"=>permutation,"n"=>H.n,
+                              "vertices"=>vertices,
+                              "edges"=>[[u,v] for (u,v) in H.edges]))
+    end
+    return JSON.json(Dict("parent"=>G.permutation,"children"=>thumbnails))
+end
+
+function _f_vector_payload(G::PlabicGraph;max_cells=250_000)
+    counts=boundary_f_vector(G.permutation;max_cells=max_cells)
+    dimension=dimensionOfPermutation(decorated_excedances(G.permutation),
+                                     G.n,G.permutation)
+    return JSON.json(Dict("permutation"=>G.permutation,
+                          "dimension"=>dimension,
+                          "counts"=>counts,
+                          "total_boundary_cells"=>sum(counts)))
+end
+
 function _interactive_state_json(G;iterations=2500,restarts=12)
     E,labels,movable=_interactive_graph_state(G;iterations=iterations,restarts=restarts)
     default_sources=Int.(minGrassmannNecklace(G.permutation)[1])
@@ -2503,13 +2529,17 @@ html,body{overflow:hidden}.bar>b{white-space:nowrap}.bar>.controls{min-width:0;f
 .builder-panel{margin-bottom:18px;padding-bottom:16px;border-bottom:1px solid var(--line)}.builder-panel[hidden]{display:none}.builder-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}.builder-grid button{font-size:12px}.builder-grid button.active{background:var(--accent);border-color:var(--accent);color:white}.builder-panel input{width:65px}.builder-actions{display:flex;gap:6px;flex-wrap:wrap}.builder-vertex{cursor:pointer;stroke-width:2}.builder-selected{stroke:#ef9b27!important;stroke-width:5!important}.builder-edge{stroke:#44545b;stroke-width:3;cursor:pointer}.builder-edge:hover{stroke:var(--danger);stroke-width:5}.builder-boundary{fill:#34434a;cursor:pointer}.builder-number{font-size:16px;font-weight:600;pointer-events:none}.builder-hint{fill:#708087;font-size:18px;text-anchor:middle}.builder-permutation{font-family:ui-monospace,monospace;color:var(--accent-dark);font-weight:650;margin-top:8px}
 .animation-panel{padding-bottom:14px;margin-bottom:10px;border-bottom:1px solid var(--line)}.animation-panel label{display:flex;align-items:center;gap:8px;color:var(--muted-ink);font-size:12px;font-weight:600}.animation-panel select{flex:1}.animation-caption{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);z-index:7;padding:7px 13px;border-radius:18px;background:rgba(38,50,56,.88);color:white;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.16);pointer-events:none}.animation-caption[hidden]{display:none}.animation-frame .edge{stroke:#4b5f67}.animation-frame .internal{filter:drop-shadow(0 2px 3px rgba(0,0,0,.16))}
 .face-hit{fill:transparent;stroke:none;pointer-events:all}.edge-hit{stroke:transparent;stroke-width:16;pointer-events:stroke;cursor:context-menu}.parameter-label{fill:#176f86;font-family:ui-monospace,monospace;font-size:15px;font-weight:700;text-anchor:middle;dominant-baseline:central;paint-order:stroke;stroke:white;stroke-width:4px;stroke-linejoin:round;pointer-events:none}.parameter-menu{position:fixed;z-index:1000;width:220px;padding:10px;background:white;border:1px solid #c9d5d9;border-radius:9px;box-shadow:0 10px 30px rgba(25,43,50,.2)}.parameter-menu[hidden]{display:none}.parameter-menu b{display:block;font-size:12px;margin-bottom:7px}.parameter-menu input{box-sizing:border-box;width:100%;margin-bottom:7px}.parameter-menu-actions{display:flex;gap:6px}.parameter-menu-note{font-size:11px;color:var(--muted-ink);margin-bottom:7px}
+#facets-panel{box-sizing:border-box;background:rgba(255,255,255,.96);border-top:1px solid var(--line);padding:18px 22px}#facets-panel[hidden]{display:none}.facets-header{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px}.facets-summary{color:var(--muted-ink);font-size:12px}.facet-row{display:grid;grid-template-columns:minmax(170px,auto) minmax(240px,1fr);align-items:center;gap:18px;padding:12px 0;border-top:1px solid #e5ebed}.facet-permutation{font-family:ui-monospace,monospace;font-size:14px;font-weight:650;user-select:text;overflow-wrap:anywhere}.facet-graph{display:block;width:100%;height:190px;pointer-events:none}.facet-disk{fill:white;stroke:#b3c0c5;stroke-width:1.5}.facet-edge{stroke:#44545b;stroke-width:2}.facet-internal{stroke:#26343a;stroke-width:1.2}.facet-boundary{fill:#44545b}.facet-boundary-label{fill:#34434a;font-size:11px;font-weight:650;text-anchor:middle;dominant-baseline:central}@media(max-width:700px){.facet-row{grid-template-columns:1fr;gap:4px}.facet-graph{height:220px}}
+#f-vector-panel{box-sizing:border-box;background:rgba(255,255,255,.96);border-top:1px solid var(--line);padding:16px 22px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}#f-vector-panel[hidden]{display:none}.f-vector-output{font-family:ui-monospace,monospace;font-size:15px;font-weight:650;user-select:text}.f-vector-note{color:var(--muted-ink);font-size:12px}
 :root{--ink:#263238;--muted-ink:#65747b;--line:#dce3e6;--soft:#f4f7f8;--paper:#fff;--accent:#287b91;--accent-dark:#1f6477;--danger:#c43d4b}html,body{color:var(--ink);background:var(--soft)}#wrap{background:linear-gradient(135deg,#f7fafb 0%,#eef3f4 100%)}.bar{padding:11px 16px;gap:10px;background:rgba(255,255,255,.94);border-color:var(--line);box-shadow:0 2px 12px rgba(28,50,58,.06);z-index:8}.bar>b{font-size:15px;letter-spacing:.01em;margin-right:5px}.controls{gap:7px}.controls label,.measurement-controls label{color:var(--muted-ink);font-size:12px;font-weight:600}button,select,input{border:1px solid #cbd6da;border-radius:7px;background:var(--paper);color:var(--ink);transition:border-color .15s,box-shadow .15s,background .15s,transform .08s}button:hover,select:hover,input:hover{border-color:#91aeb8}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid rgba(40,123,145,.28);outline-offset:1px;border-color:var(--accent)}button:active{transform:translateY(1px)}button:disabled{opacity:.45;cursor:not-allowed}#draw{background:var(--accent);border-color:var(--accent);color:white;font-weight:650}#draw:hover{background:var(--accent-dark)}#back,#forward{background:#f8fafb}#status{font-size:12px;color:var(--muted-ink)}#workspace{background:radial-gradient(circle at 50% 38%,#fff 0%,#f7f9fa 68%,#eef2f3 100%)}#canvas{padding:10px;box-sizing:border-box}#side{background:rgba(255,255,255,.97);border-color:var(--line);padding:18px 16px}#side h3{font-size:13px;letter-spacing:.035em;text-transform:uppercase;color:#49616a;margin:22px 0 10px;padding-bottom:7px;border-bottom:1px solid #e8edef}#side h3:first-child{margin-top:2px}.side-note{color:var(--muted-ink);line-height:1.45}.face-item{border-radius:5px;padding:4px 7px}.face-item:nth-child(odd){background:#f7f9fa}.square-item{color:var(--danger)}.weight-row{padding:3px 0;gap:8px}.weight-row span{overflow:hidden;text-overflow:ellipsis}.weight-row input{background:#fbfcfc}#side-dragger{background:#dfe6e8}#side-dragger:before{content:"";position:absolute;top:50%;left:2px;width:3px;height:42px;transform:translateY(-50%);border-radius:3px;background:#a8b7bc}#side-dragger:hover,#side-dragger.dragging{background:#c9e1e8}#side-dragger:hover:before,#side-dragger.dragging:before{background:var(--accent)}#measurement-panel{box-sizing:border-box;background:rgba(255,255,255,.96);border-color:var(--line);padding:18px 22px}#measurement-panel b{font-size:14px}.measurement-output{background:linear-gradient(180deg,#fff,#fbfcfc);border-color:var(--line);border-radius:10px;box-shadow:inset 0 1px 2px rgba(29,50,57,.035);padding:20px;color:#202b30}.disk{fill:#fff;stroke:#aab8bd;stroke-width:1.8;filter:drop-shadow(0 8px 14px rgba(35,55,62,.10))}.edge{stroke:#34434a;stroke-width:2.35}.internal{stroke:#26343a;stroke-width:1.4}.boundary{fill:#34434a}.boundary:hover{fill:var(--accent)}.boundary-label{fill:#34434a;font-weight:600}.face-label{fill:#c53645}.square-face{fill:#d9eef5}.dual-edge{stroke:#31869b;opacity:.8}.edge-id{fill:#24687b}.strand{filter:drop-shadow(0 1px 1px rgba(0,0,0,.12))}@media(max-width:760px){.bar{padding:9px}.bar>b{width:100%}#main{--side-width:280px}.controls input{width:170px}#canvas{height:620px}#side{padding:12px 10px}}
-</style></head><body><div id="wrap"><div class="bar"><b>Interactive plabic graph</b><div class="controls"><label for="permutation">Permutation</label><input id="permutation" spellcheck="false"><button id="draw">Draw / replace graph</button><button id="back" disabled>Back</button><button id="forward" disabled>Forward</button><button id="all-strands">Draw all strands</button><button id="primal-toggle">Hide plabic graph</button><button id="dual-toggle">Show dual graph</button></div><span id="status"></span></div><div id="main"><div id="workspace"><div id="canvas"><svg id="graph" viewBox="0 0 800 800"></svg></div><section id="measurement-panel"><div class="measurement-controls"><b>Boundary measurement result</b><button id="copy-julia" disabled>Copy Julia</button><button id="copy-m2" disabled>Copy Macaulay2</button></div><div id="measurement-result" class="measurement-output">Assign variables, then press Compute.</div></section></div><aside id="side"><div class="panel-size-controls"><label>Panel <input id="side-size" type="range" min="0" max="600" step="10" value="350"><span id="side-size-value">350</span></label></div><div id="side-content"><h3>Face labels</h3><button id="copy-labels">Copy all</button><div class="side-note">Square-face labels are red. Each line can also be selected and copied normally.</div><div id="face-list"></div><h3>Boundary measurement</h3><div class="measurement-controls"><select id="weight-mode"><option value="face">Face variables</option><option value="edge">Edge variables</option></select><label>Sources <input id="source-set" spellcheck="false"></label><button id="compute-measurement">Compute</button></div><div class="side-note">Choose a source (k\)-subset such as 1,2. Blank edge weights equal 1. Face variables use Postnikov's clockwise convention; one face is dependent through the product-one relation.</div><div id="weight-list"></div><h3>Result display</h3><div class="measurement-controls"><label>Show <select id="result-mode"><option value="matrix">Matrix</option><option value="pluckers">Plücker coordinates</option></select></label><label>Text size <input id="matrix-size" type="range" min="7" max="22" step="1" value="11"><span id="matrix-size-value">11</span></label><label>Result height <input id="result-height" type="range" min="120" max="700" step="20" value="300"><span id="result-height-value">300</span></label></div></div></aside></div></div>
+</style></head><body><div id="wrap"><div class="bar"><b>Interactive plabic graph</b><div class="controls"><label for="permutation">Permutation</label><input id="permutation" spellcheck="false"><button id="draw">Draw / replace graph</button><button id="back" disabled>Back</button><button id="forward" disabled>Forward</button><button id="all-strands">Draw all strands</button><button id="primal-toggle">Hide plabic graph</button><button id="dual-toggle">Show dual graph</button><button id="facets-toggle" disabled>Show facets</button><button id="f-vector-toggle" disabled>Compute f-vector</button></div><span id="status"></span></div><div id="main"><div id="workspace"><div id="canvas"><svg id="graph" viewBox="0 0 800 800"></svg></div><section id="f-vector-panel" hidden><b>Boundary f-vector</b><code id="f-vector-output" class="f-vector-output"></code><span id="f-vector-note" class="f-vector-note"></span></section><section id="facets-panel" hidden><div class="facets-header"><b>Facets</b><span id="facets-summary" class="facets-summary"></span></div><div id="facets-list"></div></section><section id="measurement-panel"><div class="measurement-controls"><b>Boundary measurement result</b><button id="copy-julia" disabled>Copy Julia</button><button id="copy-m2" disabled>Copy Macaulay2</button></div><div id="measurement-result" class="measurement-output">Assign variables, then press Compute.</div></section></div><aside id="side"><div class="panel-size-controls"><label>Panel <input id="side-size" type="range" min="0" max="600" step="10" value="350"><span id="side-size-value">350</span></label></div><div id="side-content"><h3>Face labels</h3><button id="copy-labels">Copy all</button><div class="side-note">Square-face labels are red. Each line can also be selected and copied normally.</div><div id="face-list"></div><h3>Boundary measurement</h3><div class="measurement-controls"><select id="weight-mode"><option value="face">Face variables</option><option value="edge">Edge variables</option></select><button id="assign-all-variables" disabled>Assign s₁,s₂,… to faces</button><label>Sources <input id="source-set" spellcheck="false"></label><button id="compute-measurement">Compute</button></div><div class="side-note">Choose a source (k\)-subset such as 1,2. Blank edge weights equal 1. Face variables use Postnikov's clockwise convention; one face is dependent through the product-one relation.</div><div id="weight-list"></div><h3>Result display</h3><div class="measurement-controls"><label>Show <select id="result-mode"><option value="matrix">Matrix</option><option value="pluckers">Plücker coordinates</option></select></label><label>Text size <input id="matrix-size" type="range" min="7" max="22" step="1" value="11"><span id="matrix-size-value">11</span></label><label>Result height <input id="result-height" type="range" min="120" max="700" step="20" value="300"><span id="result-height-value">300</span></label></div></div></aside></div></div>
 <script>
-const svg=document.getElementById('graph'),status=document.getElementById('status'),faceList=document.getElementById('face-list'),permInput=document.getElementById('permutation'),backButton=document.getElementById('back'),forwardButton=document.getElementById('forward'),allStrandsButton=document.getElementById('all-strands'),primalButton=document.getElementById('primal-toggle'),dualButton=document.getElementById('dual-toggle'),weightMode=document.getElementById('weight-mode'),sourceInput=document.getElementById('source-set'),resultMode=document.getElementById('result-mode'),weightList=document.getElementById('weight-list'),measurementResult=document.getElementById('measurement-result'),copyJulia=document.getElementById('copy-julia'),copyM2=document.getElementById('copy-m2');
+const svg=document.getElementById('graph'),status=document.getElementById('status'),faceList=document.getElementById('face-list'),permInput=document.getElementById('permutation'),backButton=document.getElementById('back'),forwardButton=document.getElementById('forward'),allStrandsButton=document.getElementById('all-strands'),primalButton=document.getElementById('primal-toggle'),dualButton=document.getElementById('dual-toggle'),weightMode=document.getElementById('weight-mode'),sourceInput=document.getElementById('source-set'),assignAllVariablesButton=document.getElementById('assign-all-variables'),resultMode=document.getElementById('result-mode'),weightList=document.getElementById('weight-list'),measurementResult=document.getElementById('measurement-result'),copyJulia=document.getElementById('copy-julia'),copyM2=document.getElementById('copy-m2');
+const facetsToggleButton=document.getElementById('facets-toggle'),facetsPanel=document.getElementById('facets-panel'),facetsList=document.getElementById('facets-list'),facetsSummary=document.getElementById('facets-summary');
+const fVectorToggleButton=document.getElementById('f-vector-toggle'),fVectorPanel=document.getElementById('f-vector-panel'),fVectorOutput=document.getElementById('f-vector-output'),fVectorNote=document.getElementById('f-vector-note');
 const NS='http://www.w3.org/2000/svg',X=x=>400+300*x,Y=y=>400-300*y;
 const selectedStrands=new Set(),palette=['#e41a1c','#377eb8','#4daf4a','#984ea3','#ff7f00','#a65628','#f781bf','#17a2b8','#6a3d9a','#1b9e77'];
-let currentState=null,primalVisible=true,dualVisible=false,labelsVisible=true,weightSignature='',measurementData=null;const faceWeights=new Map(),edgeWeights=new Map();
+let currentState=null,primalVisible=true,dualVisible=false,labelsVisible=true,weightSignature='',measurementData=null,facetsVisible=false,facetsLoaded=false,facetsLoading=false,facetsSignature='',facetsData=[],fVectorVisible=false,fVectorLoaded=false,fVectorLoading=false,fVectorSignature='',fVectorData=null;const faceWeights=new Map(),edgeWeights=new Map();
 const main=document.getElementById('main'),side=document.getElementById('side'),sideContent=document.getElementById('side-content'),sideSize=document.getElementById('side-size'),sideSizeValue=document.getElementById('side-size-value'),matrixSize=document.getElementById('matrix-size'),matrixSizeValue=document.getElementById('matrix-size-value'),resultHeight=document.getElementById('result-height'),resultHeightValue=document.getElementById('result-height-value'),measurementPanel=document.getElementById('measurement-panel');
 function setSideSize(){const value=Number(sideSize.value);main.style.setProperty('--side-width',value+'px');side.classList.toggle('collapsed',value===0);sideContent.hidden=value===0;sideSizeValue.textContent=value===0?'hidden':value}
 function setResultHeight(){measurementPanel.style.height=resultHeight.value+'px';resultHeightValue.textContent=resultHeight.value}
@@ -2582,12 +2612,23 @@ async function load(){const r=await fetch('/state');if(!r.ok)throw Error(await r
 function labelText(label){return '{'+label.join(',')+'}'}
 function defaultVariable(i){return i<=26?String.fromCharCode(96+i):'x_'+i}
 function graphSignature(s){return JSON.stringify([s.permutation,s.edges,s.faces.map(f=>f.label)])}
+function permutationSignature(s){return s&& !s.blank?JSON.stringify(s.permutation):''}
+function resetFacets(){facetsVisible=false;facetsLoaded=false;facetsLoading=false;facetsSignature='';facetsData=[];facetsPanel.hidden=true;facetsList.replaceChildren();facetsSummary.textContent='';facetsToggleButton.textContent='Show facets'}
+function facetGraphSvg(facet){const facetSvg=el('svg',{viewBox:'0 0 320 220',class:'facet-graph',role:'img','aria-label':'Plabic graph for facet permutation ['+facet.permutation.join(', ')+']'});facetSvg.append(el('title',{},'Plabic graph for facet ['+facet.permutation.join(', ')+']'));facetSvg.append(el('circle',{cx:160,cy:110,r:88,class:'facet-disk'}));const by=new Map(facet.vertices.map(vertex=>[vertex.id,vertex])),cx=x=>160+88*x,cy=y=>110-88*y;for(const [a,b] of facet.edges){const u=by.get(a),v=by.get(b);facetSvg.append(el('line',{x1:cx(u.x),y1:cy(u.y),x2:cx(v.x),y2:cy(v.y),class:'facet-edge'}))}for(const vertex of facet.vertices){if(vertex.id<=facet.n)continue;facetSvg.append(el('circle',{cx:cx(vertex.x),cy:cy(vertex.y),r:5.5,fill:vertex.color==='black'?'black':'white',class:'facet-internal'}))}for(let i=1;i<=facet.n;i++){const vertex=by.get(i);facetSvg.append(el('circle',{cx:cx(vertex.x),cy:cy(vertex.y),r:3.5,class:'facet-boundary'}));facetSvg.append(el('text',{x:cx(1.16*vertex.x),y:cy(1.16*vertex.y),class:'facet-boundary-label'},String(i)))}return facetSvg}
+function renderFacets(){facetsList.replaceChildren();facetsSummary.textContent=facetsData.length===1?'1 facet':facetsData.length+' facets';if(facetsData.length===0){const message=document.createElement('div');message.className='side-note';message.textContent='This cell has no facets.';facetsList.append(message)}else for(const facet of facetsData){const row=document.createElement('div');row.className='facet-row';const permutation=document.createElement('div');permutation.className='facet-permutation';permutation.textContent='['+facet.permutation.join(', ')+']';row.append(permutation,facetGraphSvg(facet));facetsList.append(row)}facetsVisible=true;facetsPanel.hidden=false;facetsToggleButton.textContent='Hide facets'}
+async function toggleFacets(){if(!currentState||currentState.blank||facetsLoading)return;if(facetsVisible){facetsVisible=false;facetsPanel.hidden=true;facetsToggleButton.textContent='Show facets';return}const signature=permutationSignature(currentState);if(facetsLoaded&&facetsSignature===signature){renderFacets();return}facetsLoading=true;facetsToggleButton.disabled=true;status.textContent='Computing facets…';try{const response=await fetch('/facets',{method:'POST'});if(!response.ok)throw Error(await response.text());const payload=await response.json();if(signature!==permutationSignature(currentState))return;facetsData=payload.children||[];facetsSignature=signature;facetsLoaded=true;renderFacets();status.textContent='Computed '+facetsData.length+' '+(facetsData.length===1?'facet.':'facets.')}catch(error){status.textContent=error.message}finally{facetsLoading=false;facetsToggleButton.disabled=!currentState||currentState.blank}}
+function resetFVector(){fVectorVisible=false;fVectorLoaded=false;fVectorLoading=false;fVectorSignature='';fVectorData=null;fVectorPanel.hidden=true;fVectorOutput.textContent='';fVectorNote.textContent='';fVectorToggleButton.textContent='Compute f-vector'}
+function renderFVector(){if(!fVectorData)return;fVectorOutput.textContent='('+fVectorData.counts.join(', ')+')';fVectorNote.textContent=fVectorData.dimension===0?'No proper boundary cells; the original cell has dimension 0.':'Entries count dimensions 0 through '+(fVectorData.dimension-1)+'; '+fVectorData.total_boundary_cells+' proper boundary cells in total.';fVectorVisible=true;fVectorPanel.hidden=false;fVectorToggleButton.textContent='Hide f-vector'}
+async function toggleFVector(){if(!currentState||currentState.blank||fVectorLoading)return;if(fVectorVisible){fVectorVisible=false;fVectorPanel.hidden=true;fVectorToggleButton.textContent='Show f-vector';return}const signature=permutationSignature(currentState);if(fVectorLoaded&&fVectorSignature===signature){renderFVector();return}fVectorLoading=true;fVectorToggleButton.disabled=true;status.textContent='Computing the full boundary f-vector…';try{const response=await fetch('/f-vector',{method:'POST'});if(!response.ok)throw Error(await response.text());const payload=await response.json();if(signature!==permutationSignature(currentState))return;fVectorData=payload;fVectorSignature=signature;fVectorLoaded=true;renderFVector();status.textContent='Computed the f-vector from '+payload.total_boundary_cells+' proper boundary cells.'}catch(error){status.textContent=error.message}finally{fVectorLoading=false;fVectorToggleButton.disabled=!currentState||currentState.blank}}
 function collectWeights(){const map=weightMode.value==='face'?faceWeights:edgeWeights;for(const input of weightList.querySelectorAll('input'))map.set(Number(input.dataset.id),input.value)}
-function renderWeightEditor(s){const signature=graphSignature(s);if(signature!==weightSignature){faceWeights.clear();edgeWeights.clear();weightSignature=signature;measurementData=null;sourceInput.value=(s.default_sources||[]).join(',')}weightList.replaceChildren();const faceMode=weightMode.value==='face',items=faceMode?s.faces:s.edges;items.forEach((item,j)=>{const id=faceMode?item.id:j+1,map=faceMode?faceWeights:edgeWeights;const row=document.createElement('label');row.className='weight-row';const description=document.createElement('span');description.textContent=faceMode?'face '+labelText(item.label)+(id===1?' (reference)':''):'e'+id+' ('+item[0]+'—'+item[1]+')';const input=document.createElement('input');input.dataset.id=id;input.disabled=faceMode&&id===1;input.value=faceMode&&id===1?'dependent':(map.get(id)||'');input.placeholder='1';input.addEventListener('change',()=>{const value=input.value.trim();value&&value!=='1'?map.set(id,value):map.delete(id);measurementData=null;if(currentState)render(currentState)});row.append(description,input);weightList.append(row)});renderMeasurementResult()}
+function renderWeightEditor(s){const signature=graphSignature(s);if(signature!==weightSignature){faceWeights.clear();edgeWeights.clear();weightSignature=signature;measurementData=null;sourceInput.value=(s.default_sources||[]).join(',')}weightList.replaceChildren();const faceMode=weightMode.value==='face',items=faceMode?s.faces:s.edges;assignAllVariablesButton.textContent=faceMode?'Assign s₁,s₂,… to faces':'Assign t₁,t₂,… to edges';items.forEach((item,j)=>{const id=faceMode?item.id:j+1,map=faceMode?faceWeights:edgeWeights;const row=document.createElement('label');row.className='weight-row';const description=document.createElement('span');description.textContent=faceMode?'face '+labelText(item.label)+(id===1?' (reference)':''):'e'+id+' ('+item[0]+'—'+item[1]+')';const input=document.createElement('input');input.dataset.id=id;input.disabled=faceMode&&id===1;input.value=faceMode&&id===1?'dependent':(map.get(id)||'');input.placeholder='1';input.addEventListener('change',()=>{const value=input.value.trim();value&&value!=='1'?map.set(id,value):map.delete(id);measurementData=null;if(currentState)render(currentState)});row.append(description,input);weightList.append(row)});renderMeasurementResult()}
+function assignAllFaceVariables(){if(!currentState||currentState.blank)return;faceWeights.clear();let index=1;for(const face of currentState.faces){if(face.id===1)continue;faceWeights.set(face.id,'s_'+index);index++}measurementData=null;render(currentState);const count=index-1;status.textContent=count?'Assigned s_1 through s_'+count+' to all '+count+' independent faces. Face 1 remains dependent.':'This graph has no independent face variables; face 1 is dependent.'}
+function assignAllEdgeVariables(){if(!currentState||currentState.blank)return;edgeWeights.clear();currentState.edges.forEach((_,j)=>edgeWeights.set(j+1,'t_'+(j+1)));weightMode.value='edge';measurementData=null;render(currentState);status.textContent='Assigned t_1 through t_'+currentState.edges.length+' to all '+currentState.edges.length+' edges.'}
+function assignAllVariables(){weightMode.value==='face'?assignAllFaceVariables():assignAllEdgeVariables()}
 function renderMeasurementResult(){if(!measurementData){measurementResult.textContent='Assign variables, then press Compute.';copyJulia.disabled=copyM2.disabled=true;return}const pl=resultMode.value==='pluckers';measurementResult.innerHTML='\\['+(pl?measurementData.plucker_latex:measurementData.matrix_latex)+'\\]';copyJulia.disabled=copyM2.disabled=false;if(window.MathJax?.typesetPromise)MathJax.typesetPromise([measurementResult])}
 async function computeMeasurement(){if(!currentState||currentState.blank)return;collectWeights();const sources=sourceInput.value.split(/[ ,]+/).filter(Boolean).map(Number);if(sources.length!==currentState.k||sources.some(x=>!Number.isInteger(x))){status.textContent='Enter exactly '+currentState.k+' distinct integer sources.';return}status.textContent='Computing boundary measurement…';const map=weightMode.value==='face'?faceWeights:edgeWeights;try{const r=await fetch('/measurement',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:weightMode.value,sources,weights:Object.fromEntries(map)})});if(!r.ok)throw Error(await r.text());measurementData=await r.json();renderMeasurementResult();status.textContent='Boundary measurement computed from sources '+measurementData.sources.join(', ')+'.'}catch(e){status.textContent=e.message}}
 function renderDual(s,layer){const by=new Map(s.faces.map(f=>[f.id,f]));for(const ids of (s.dual_black_faces||[])){const faces=ids.map(id=>by.get(id)).filter(Boolean);if(faces.length>=3)layer.append(el('polygon',{points:faces.map(f=>X(f.dual_x)+','+Y(f.dual_y)).join(' '),class:'dual-black-face'}))}for(const [a,b] of s.dual_edges){const u=by.get(a),v=by.get(b);layer.append(el('line',{x1:X(u.dual_x),y1:Y(u.dual_y),x2:X(v.dual_x),y2:Y(v.dual_y),class:'dual-edge'}))}}
-function render(s){builder.active=false;builderPanel.hidden=true;currentState=s;permInput.value=s.blank?'':'['+s.permutation.join(', ')+']';svg.replaceChildren();svg.append(el('circle',{cx:400,cy:400,r:300,class:'disk'}));const primal=el('g',{display:primalVisible?'inline':'none'}),dual=el('g',{display:dualVisible?'inline':'none'}),labels=el('g',{display:(primalVisible||dualVisible)?'inline':'none'});svg.append(primal);svg.append(dual);svg.append(labels);
+function render(s){builder.active=false;builderPanel.hidden=true;currentState=s;if(facetsLoaded&&facetsSignature!==permutationSignature(s))resetFacets();if(fVectorLoaded&&fVectorSignature!==permutationSignature(s))resetFVector();permInput.value=s.blank?'':'['+s.permutation.join(', ')+']';svg.replaceChildren();svg.append(el('circle',{cx:400,cy:400,r:300,class:'disk'}));const primal=el('g',{display:primalVisible?'inline':'none'}),dual=el('g',{display:dualVisible?'inline':'none'}),labels=el('g',{display:(primalVisible||dualVisible)?'inline':'none'});svg.append(primal);svg.append(dual);svg.append(labels);
  for(const f of s.faces){if(!f.movable)continue;primal.append(el('polygon',{points:f.polygon.map(p=>X(p[0])+','+Y(p[1])).join(' '),class:'square-face'}))}
  for(const f of s.faces){const hit=el('polygon',{points:f.polygon.map(p=>X(p[0])+','+Y(p[1])).join(' '),class:'face-hit'});hit.addEventListener('contextmenu',e=>openParameterMenu('face',f.id,e));if(f.movable)hit.addEventListener('dblclick',()=>move(f.label));primal.append(hit)}
  const by=new Map(s.vertices.map(v=>[v.id,v]));for(const [j,[a,b]] of s.edges.entries()){const u=by.get(a),v=by.get(b),line=el('line',{x1:X(u.x),y1:Y(u.y),x2:X(v.x),y2:Y(v.y),class:'edge'});line.addEventListener('contextmenu',e=>openParameterMenu('edge',j+1,e));primal.append(line);const hit=el('line',{x1:X(u.x),y1:Y(u.y),x2:X(v.x),y2:Y(v.y),class:'edge-hit'});hit.addEventListener('contextmenu',e=>openParameterMenu('edge',j+1,e));primal.append(hit)}
@@ -2596,12 +2637,12 @@ function render(s){builder.active=false;builderPanel.hidden=true;currentState=s;
  for(let i=1;i<=s.n;i++){const v=by.get(i),toggle=()=>{selectedStrands.has(i)?selectedStrands.delete(i):selectedStrands.add(i);render(s)};const dot=el('circle',{cx:X(v.x),cy:Y(v.y),r:5,class:'boundary'});dot.addEventListener('dblclick',toggle);dot.append(el('title',{},'Double-click to toggle strand '+i));primal.append(dot);const number=el('text',{x:X(1.12*v.x),y:Y(1.12*v.y),class:'boundary-label','text-anchor':'middle','dominant-baseline':'central'},String(i));number.addEventListener('dblclick',toggle);primal.append(number)}
  renderDual(s,dual);
  if(labelsVisible)for(const f of s.faces){const labelX=dualVisible?f.dual_x:f.x,labelY=dualVisible?f.dual_y:f.y,t=el('text',{x:X(labelX),y:Y(labelY),'font-size':f.font_size,class:'face-label'+(f.movable?' movable':'')},labelText(f.label));t.addEventListener('contextmenu',e=>openParameterMenu('face',f.id,e));if(f.movable){t.setAttribute('title','Double-click to apply square move');t.addEventListener('dblclick',()=>move(f.label))}labels.append(t)}
- for(const f of s.faces){const value=faceWeights.get(f.id);if(value)labels.append(el('text',{x:X(f.x),y:Y(f.y)+(labelsVisible?16:0),class:'parameter-label'},value))}
- s.edges.forEach(([a,b],j)=>{const value=edgeWeights.get(j+1);if(!value)return;const u=by.get(a),v=by.get(b),dx=X(v.x)-X(u.x),dy=Y(v.y)-Y(u.y),length=Math.hypot(dx,dy)||1,offset=12;labels.append(el('text',{x:(X(u.x)+X(v.x))/2-offset*dy/length,y:(Y(u.y)+Y(v.y))/2+offset*dx/length,class:'parameter-label'},value))});
+ if(weightMode.value==='face')for(const f of s.faces){const value=faceWeights.get(f.id);if(value)labels.append(el('text',{x:X(f.x),y:Y(f.y)+(labelsVisible?16:0),class:'parameter-label'},value))}
+ if(weightMode.value==='edge')s.edges.forEach(([a,b],j)=>{const value=edgeWeights.get(j+1);if(!value)return;const u=by.get(a),v=by.get(b),dx=X(v.x)-X(u.x),dy=Y(v.y)-Y(u.y),length=Math.hypot(dx,dy)||1,offset=12;labels.append(el('text',{x:(X(u.x)+X(v.x))/2-offset*dy/length,y:(Y(u.y)+Y(v.y))/2+offset*dx/length,class:'parameter-label'},value))});
  faceList.replaceChildren();for(const f of s.faces){const item=document.createElement('div');item.className='face-item'+(f.movable?' square-item':'');item.textContent=labelText(f.label);item.title=f.movable?'Square face':'';faceList.append(item)}
  renderWeightEditor(s);
  primalButton.textContent=primalVisible?'Hide plabic graph':'Show plabic graph';dualButton.textContent=dualVisible?'Hide dual graph':'Show dual graph';
- backButton.disabled=!s.can_undo;forwardButton.disabled=!s.can_redo;editGraphButton.disabled=!!s.blank||s.n===0;allStrandsButton.disabled=s.n===0;allStrandsButton.textContent=s.n>0&&selectedStrands.size===s.n?'Undraw all strands':'Draw all strands';
+ backButton.disabled=!s.can_undo;forwardButton.disabled=!s.can_redo;editGraphButton.disabled=!!s.blank||s.n===0;allStrandsButton.disabled=s.n===0;facetsToggleButton.disabled=!!s.blank||facetsLoading;fVectorToggleButton.disabled=!!s.blank||fVectorLoading;assignAllVariablesButton.disabled=!!s.blank||(weightMode.value==='face'?s.faces.length===0:s.edges.length===0);allStrandsButton.textContent=s.n>0&&selectedStrands.size===s.n?'Undraw all strands':'Draw all strands';
  status.textContent=s.blank?'Enter a decorated permutation and draw its graph.':'';}
 async function move(label){if(mutationPlaying)return;status.textContent='Preparing square-move animation…';try{const r=await fetch('/move/'+label.join(','),{method:'POST'});if(!r.ok)throw Error(await r.text());await playMutation(await r.json())}catch(e){mutationPlaying=false;animationCaption.hidden=true;status.textContent=e.message}}
 async function drawPermutation(){if(mutationPlaying)return;status.textContent='Replacing graph…';try{const r=await fetch('/permutation',{method:'POST',body:permInput.value});if(!r.ok)throw Error(await r.text());selectedStrands.clear();await transitionState(await r.json(),'Construct the new permutation graph');status.textContent='Graph replaced.'}catch(e){status.textContent=e.message}}
@@ -2611,9 +2652,11 @@ document.getElementById('draw').addEventListener('click',drawPermutation);permIn
 backButton.addEventListener('click',goBack);
 forwardButton.addEventListener('click',goForward);
 primalButton.addEventListener('click',()=>{primalVisible=!primalVisible;if(currentState)render(currentState)});dualButton.addEventListener('click',()=>{dualVisible=!dualVisible;if(currentState)render(currentState)});
+facetsToggleButton.addEventListener('click',toggleFacets);
+fVectorToggleButton.addEventListener('click',toggleFVector);
 allStrandsButton.addEventListener('click',()=>{if(!currentState)return;if(selectedStrands.size===currentState.n)selectedStrands.clear();else{selectedStrands.clear();for(let i=1;i<=currentState.n;i++)selectedStrands.add(i)}render(currentState)});
 document.getElementById('copy-labels').addEventListener('click',async()=>{if(!currentState)return;const text=currentState.faces.map(f=>labelText(f.label)).join('\n');try{await navigator.clipboard.writeText(text);status.textContent='Face labels copied.'}catch(e){status.textContent='Select the labels in the list and copy them manually.'}});
-weightMode.addEventListener('change',()=>{if(currentState)render(currentState)});resultMode.addEventListener('change',renderMeasurementResult);document.getElementById('compute-measurement').addEventListener('click',computeMeasurement);
+weightMode.addEventListener('change',()=>{if(currentState)render(currentState)});assignAllVariablesButton.addEventListener('click',assignAllVariables);resultMode.addEventListener('change',renderMeasurementResult);document.getElementById('compute-measurement').addEventListener('click',computeMeasurement);
 copyJulia.addEventListener('click',async()=>{if(measurementData)await navigator.clipboard.writeText(resultMode.value==='pluckers'?measurementData.plucker_julia:measurementData.matrix_julia)});copyM2.addEventListener('click',async()=>{if(measurementData)await navigator.clipboard.writeText(resultMode.value==='pluckers'?measurementData.plucker_m2:measurementData.matrix_m2)});
 load().catch(e=>status.textContent=e.message);
 </script></body></html>"""
@@ -2655,13 +2698,18 @@ Double-clicking boundary vertex `i` toggles the medial strand originating at
 `i`; selected strands persist across square moves.  The page also provides a
 permutation input, an all-strands toggle, and a copyable face-label sidebar in
 which square labels are red.  The default face-label convention is
-`(:source, :left)`. Back/Forward navigate graph history. The boundary-
+`(:source, :left)`. Back/Forward navigate graph history. **Show facets** lists
+every codimension-one boundary permutation below the main drawing beside a
+static plabic-graph thumbnail. **Compute f-vector** counts every cell in the
+proper boundary by dimension without drawing descendant graphs. The boundary-
 measurement panel accepts Postnikov face variables or individual edge weights
 and displays the matrix or Plücker coordinates with Julia and Macaulay2 copy
-formats. Keep the returned session alive and call `close(session)` when finished.
+formats for the original graph only. Keep the returned session alive and call
+`close(session)` when finished.
 """
 function interactive_plabic_graph(G::PlabicGraph;port=8765,open_browser=true,
                                   iterations=2500,restarts=12,
+                                  boundary_cell_limit=250_000,
                                   initial_blank=false)
     current=Ref(G)
     has_graph=Ref(!initial_blank)
@@ -2746,6 +2794,27 @@ function interactive_plabic_graph(G::PlabicGraph;port=8765,open_browser=true,
                 body=lock(guard) do
                     _measurement_payload(current[],request.body;
                                          iterations=iterations,restarts=restarts)
+                end
+                return HTTP.Response(200,["Content-Type"=>"application/json"],body)
+            catch err
+                return HTTP.Response(400,sprint(showerror,err))
+            end
+        elseif request.method=="POST" && target=="/facets"
+            has_graph[] || return HTTP.Response(400,"enter and draw a permutation first")
+            try
+                body=lock(guard) do
+                    _facets_payload(current[];
+                                    iterations=iterations,restarts=restarts)
+                end
+                return HTTP.Response(200,["Content-Type"=>"application/json"],body)
+            catch err
+                return HTTP.Response(400,sprint(showerror,err))
+            end
+        elseif request.method=="POST" && target=="/f-vector"
+            has_graph[] || return HTTP.Response(400,"enter and draw a permutation first")
+            try
+                body=lock(guard) do
+                    _f_vector_payload(current[];max_cells=boundary_cell_limit)
                 end
                 return HTTP.Response(200,["Content-Type"=>"application/json"],body)
             catch err
@@ -3182,7 +3251,7 @@ function reverseGrassmannNecklace(p::Vector{Int64})
             representative = r <= q ? r : r - n
 
             if representative <= q && q < representative + shifts[r]
-                push!(I, modN(representative, n))
+                push!(I, mod1(representative, n))
             end
         end
 
@@ -3306,63 +3375,6 @@ end
 
 
 
-function signOfList(I::Vector{Int64})
-
-    indexedI = [[I[i], i] for i in 1:size(I)[1]]
-
-    sortedI = sort(indexedI);
-
-    p = [x[2] for x in sortedI];
-
-    inversions = count(i > j for (a, i) in enumerate(I) for j in I[(a + 1):end])
-    return iseven(inversions) ? 1 : -1
-end
-
-function is_orthogonal(k::Int64, n::Int64, M::Set{Vector{Int64}}, verbose=false)
-
-    W = _subsets(Vector(1:n), k-1);
-
-    N = binomial(n,k-1);
-
-    for i in 1:N
-        
-        for j in i:N
-
-            I = W[i];
-            J = W[j];
-
-            IJcomp = sort(collect(setdiff( Set(Vector(1:n)) ,union(Set(I), Set(J)) )));
-
-            L1 = filter( l-> signOfList(reduce(vcat, (I, [l])) ) * signOfList(reduce(vcat, (J, [l])) ) * ( sort(reduce(vcat, (I, [l])) ) in M) * ( sort(reduce(vcat, (J, [l])) ) in M) * (-1)^l ==  1 , IJcomp) 
-            L2 = filter( l-> signOfList(reduce(vcat, (I, [l])) ) * signOfList(reduce(vcat, (J, [l])) ) * ( sort(reduce(vcat, (I, [l])) ) in M) * ( sort(reduce(vcat, (J, [l])) ) in M) * (-1)^l == -1 , IJcomp) 
-
-            if  ( isempty(L1) &&  ! isempty(L2) ) || (!isempty(L1) && isempty(L2)) 
-                
-                if verbose
-                    println("Problem at: I= ", I," and J= ",J);
-                    println("+ side indices : ",L1, " and - side indices:", L2 )
-                end
-
-                return false;
-
-            end
-
-        end
-
-    end
-
-
-    return true
-end
-
-
-function is_orthogonal(p::Vector{Int64}, verbose=false)
-    k = countExceedences(p);
-    n = size(p)[1];
-    M = fromDecoratedPermToPositroid(k,n,p)
-    return is_orthogonal(k,n,M);
-end
-
 function alignmentNumber(p::Vector{Int64})
     
     n = size(p)[1]
@@ -3424,289 +3436,10 @@ function dimensionOfPermutation(k::Int64, n::Int64, p::Vector{Int64})
 end
 
 
-function numVertices(n)
-
-    if n in 0:3
-        return 0
-    end
-
-    s = 0
-
-    for l in 1:trunc(Int64, n/2)
-
-        if n%2 ==0
-
-            s = s+ (l-1)^2 +   trunc(Int64, ((n-2*l)/2)^2);
-
-        end
-
-        if n%2 == 1
-
-            s = s+ (l-1)^2 +   trunc(Int64, ((n+1-2*l)/2) * ((n-1-2*l)/2) );
-
-        end
-
-    end
-    
-    return s + numVertices(n-1)
-    
-end
-
 function countExceedences(p::Vector{Int64})
     return sum([( i < abs(p[i])) + (i == - p[i]) for i in 1:size(p)[1]]);
 end
 
-
-
-function permutationFromCycles(n::Int64, C::Vector{Vector{Int64}})
-
-    p = [0 for i in 1:n]
-
-    for i in 1:n
-        
-        for I in C
-            if i in I
-                j = findall(t->t==i, I)[1];
-
-                if j < size(I)[1]
-                    p[i] = I[j+1]
-                else
-                    p[i] = I[1]
-                end
-            end
-        end
-
-
-        if p[i] == 0
-            p[i] = i
-        end
-    end
-
-    return p;
-
-
-end
-
-
-
-
-# Define a function to check the orientation of three points
-function orientation(p, q, r)
-    val = (q[2] - p[2]) * (r[1] - q[1]) - (q[1] - p[1]) * (r[2] - q[2])
-    if val > 0
-        return 1  # Clockwise
-    elseif val < 0
-        return -1 # Counter-clockwise
-    else
-        return 0  # Collinear
-    end
-end
-
-# Check if a point is on the segment defined by two other points
-function on_segment(p, q, r)
-    return min(p[1], r[1]) <= q[1] <= max(p[1], r[1]) && min(p[2], r[2]) <= q[2] <= max(p[2], r[2])
-end
-
-# Check if two line segments (p1, q1) and (p2, q2) intersect
-function do_intersect(p1, q1, p2, q2)
-    # Find the orientations of the ordered triplets (p1, q1, p2), (p1, q1, q2), (p2, q2, p1), (p2, q2, q1)
-    o1 = orientation(p1, q1, p2)
-    o2 = orientation(p1, q1, q2)
-    o3 = orientation(p2, q2, p1)
-    o4 = orientation(p2, q2, q1)
-
-    # General case: segments intersect if orientations are different
-    if o1 != o2 && o3 != o4
-        return true
-    end
-
-    # Special cases
-    if o1 == 0 && on_segment(p1, p2, q1)
-        return true
-    end
-    if o2 == 0 && on_segment(p1, q2, q1)
-        return true
-    end
-    if o3 == 0 && on_segment(p2, p1, q2)
-        return true
-    end
-    if o4 == 0 && on_segment(p2, q1, q2)
-        return true
-    end
-
-    return false
-end
-
-# Function to check if two polygons intersect
-function polygons_intersect(poly1, poly2)
-    n1 = length(poly1)
-    n2 = length(poly2)
-
-    # Check every edge of poly1 against every edge of poly2
-    for i in 1:n1
-        p1 = poly1[i]
-        q1 = poly1[(i % n1) + 1]
-        for j in 1:n2
-            p2 = poly2[j]
-            q2 = poly2[(j % n2) + 1]
-            if do_intersect(p1, q1, p2, q2)
-                return true  # An intersection was found
-            end
-        end
-    end
-    return false  # No intersection found
-end
-
-# Function to group only the data based on polygon connected components
-function group_data_by_polygon_components(polygons_with_data)
-    n = length(polygons_with_data)
-    visited = falses(n)  # Array to keep track of visited polygons
-    components = []      # Array to store connected components of data
-
-    # Define a DFS function to explore connected polygons and collect data
-    function dfs(polygon_idx, component_data)
-        visited[polygon_idx] = true
-        # Collect the data associated with the polygon
-        push!(component_data, polygons_with_data[polygon_idx][2])
-
-        # Check all other polygons for intersection
-        for i in 1:n
-            if !visited[i] && polygons_intersect(polygons_with_data[polygon_idx][1], polygons_with_data[i][1])
-                dfs(i, component_data)
-            end
-        end
-    end
-
-    # Loop over all polygons and perform DFS for unvisited polygons
-    for i in 1:n
-        if !visited[i]
-            component_data = []
-            dfs(i, component_data)
-            push!(components, component_data)
-        end
-    end
-
-    return components
-end
-
-
-function orthogonal_dimension(k::Int64, n::Int64, M::Set{Vector{Int64}})
-
- 
-
-    p = fromPositroidToPermutation(n,M);
-    k = countExceedences(p);
-    vertices = generate_ngon_vertices(n);
-
-
-    cyc = filter(c -> length(c) > 1, _permutation_cycles(p));
-    polygons_with_cycles = [ [[vertices[i] for i in c], c] for c in cyc];
-
-
-
-
-    N = 0;
-
-    for i in 1:size(cyc)[1]
-    
-        ki = countExceedences(permutationFromCycles(n,[polygons_with_cycles[i][2]]));
-
-        N = N + binomial(ki+1,2);
-
-        for j in i+1:size(cyc)[1]
-            if polygons_intersect(polygons_with_cycles[i][1], polygons_with_cycles[j][1])
-                
-                kj = countExceedences(permutationFromCycles(n,[polygons_with_cycles[j][2]]))
-                N = N + ki*kj
-            end
-        end
-    end
-
-
-    return dimensionOfPositroid(k,n,M) - N;
-
-end
-
-
-
-
-
-function orthogonal_dimensionOfPermutation(p::Vector{Int64})
-    n = size(p)[1];
-    k = countExceedences(p);
-
-    M = fromDecoratedPermToPositroid(k,n,p)
-    
-    return orthogonal_dimension(k,n,M);
-    
-end
-
-
-
-
-
-
-
-function inversionsOfPerm(p::Vector{Int64})
-
-    n = size(p)[1];
-
-    Invs = []
-
-    for i in 1:n-1
-        for j in i+1:n
-
-            if p[i]> p[j]
-                append!(Invs, [(i,j)]);
-            end
-        end
-    end
-    
-    return Invs
-end
-
-
-function pminversionsOfPerm(p::Vector{Int64})
-
-    n = size(p)[1];
-
-    Invs = []
-
-    for i in 1:n-1
-        for j in i+1:n
-
-            if p[i]> p[j] && (-1)^(i+j) == -1
-                append!(Invs, [(i,j)]);
-            end
-        end
-    end
-    
-    return size(Invs)[1]
-end
-
-
-
-# The order on the positroids is not containement!
-function is_codim1_face(p::Vector{Int64}, q::Vector{Int64})
-    
-    n = size(p)[1]
-    k = countExceedences(p);
-    
-    if countExceedences(q) !=k
-        return "The two permutations should have the same k";
-    end
-
-    d = orthogonal_dimensionOfPermutation(p)
-
-    if d != orthogonal_dimensionOfPermutation(q) -1
-        return false;
-    end
-
-    Mp = fromDecoratedPermToPositroid(k,n,p)
-    Mq = fromDecoratedPermToPositroid(k,n,q)
-
-    return isempty(setdiff(Mp, Mq));
-end
 
 
 function is_child(p::Vector{Int64}, q::Vector{Int64})
@@ -3724,31 +3457,129 @@ function is_child(p::Vector{Int64}, q::Vector{Int64})
     return isempty(setdiff(Mp, Mq));
 end
 
+function _decorated_inverse(p::Vector{Int})
+    inverse=zeros(Int,length(p))
+    for source in eachindex(p)
+        target=abs(p[source])
+        inverse[target]=source==target ? p[source] : source
+    end
+    return inverse
+end
+
 """
     immediate_children(p)
 
 Return the codimension-one boundary cells covered by the positroid cell `p`.
-Each result has the same rank, dimension `dimension(p)-1`, and a set of bases
-contained in that of `p`. The current exhaustive algorithm is intended for
-moderate ground-set sizes.
+Each result has the same rank and dimension `dimension(p)-1`. The algorithm
+generates the bounded-affine Bruhat covers of the inverse decorated
+permutation, avoiding exhaustive enumeration of every decorated permutation.
 """
 function immediate_children(input::AbstractVector{<:Integer})
-    p = Int.(input)
+    p=Int.(input)
     _validate_decorated_permutation(p)
-    n = length(p)
-    k = decorated_excedances(p)
-    dimension = dimensionOfPermutation(k, n, p)
-    dimension == 0 && return Vector{Vector{Int}}()
-    parent_bases = fromDecoratedPermToPositroid(k, n, p)
-    children = Vector{Vector{Int}}()
-    for candidate in decorated_permutations(n, k)
-        dimensionOfPermutation(k, n, candidate) == dimension - 1 || continue
-        child_bases = fromDecoratedPermToPositroid(k, n, candidate)
-        isempty(setdiff(child_bases, parent_bases)) || continue
-        push!(children, candidate)
+    n=length(p)
+    k=decorated_excedances(p)
+    dimension=dimensionOfPermutation(k,n,p)
+    dimension==0 && return Vector{Vector{Int}}()
+
+    inverse=_decorated_inverse(p)
+    affine=[inverse[i]==-i ? i+n :
+            (inverse[i]<i ? inverse[i]+n : inverse[i]) for i in 1:n]
+    children=Vector{Vector{Int}}()
+
+    # Every affine transposition has a representative i<j<i+n. Swapping its
+    # two periodic positions gives a Bruhat neighbor; boundedness and the
+    # one-dimensional drop select precisely the downward positroid covers.
+    for i in 1:n,offset in 1:(n-1)
+        j=i+offset
+        j0=mod1(j,n)
+        period=fld(j-1,n)
+        candidate_affine=copy(affine)
+        candidate_affine[i]=affine[j0]+period*n
+        candidate_affine[j0]=affine[i]-period*n
+        all(a<=candidate_affine[a]<=a+n for a in 1:n) || continue
+
+        candidate_inverse=Int[
+            candidate_affine[a]==a ? a :
+            candidate_affine[a]==a+n ? -a : mod1(candidate_affine[a],n)
+            for a in 1:n]
+        sort(abs.(candidate_inverse))==collect(1:n) || continue
+        candidate=_decorated_inverse(candidate_inverse)
+        decorated_excedances(candidate)==k || continue
+        dimensionOfPermutation(k,n,candidate)==dimension-1 || continue
+        candidate in children || push!(children,candidate)
     end
     sort!(children)
     return children
+end
+
+function _boundary_cells_with_dimensions(input::AbstractVector{<:Integer};
+                                          max_cells::Integer=1_000_000)
+    p=Int.(input)
+    _validate_decorated_permutation(p)
+    max_cells>=0 || throw(ArgumentError("max_cells must be nonnegative"))
+    n=length(p)
+    k=decorated_excedances(p)
+    parent_dimension=dimensionOfPermutation(k,n,p)
+    seen=Set([Tuple(p)])
+    cells=Vector{Vector{Int}}()
+    dimensions=Int[]
+    frontier=[(p,parent_dimension)]
+    head=1
+    while head<=length(frontier)
+        current,current_dimension=frontier[head]
+        head+=1
+        for child in immediate_children(current)
+            key=Tuple(child)
+            key in seen && continue
+            length(cells)<max_cells ||
+                throw(ArgumentError("the boundary contains more than $max_cells cells; "*
+                                    "increase max_cells to continue"))
+            push!(seen,key)
+            push!(cells,child)
+            child_dimension=current_dimension-1
+            push!(dimensions,child_dimension)
+            push!(frontier,(child,child_dimension))
+        end
+    end
+    order=sortperm(eachindex(cells);by=i->(dimensions[i],Tuple(cells[i])))
+    return cells[order],dimensions[order]
+end
+
+"""
+    boundary_cells(p; max_cells=1_000_000)
+
+Return every distinct decorated permutation indexing a proper boundary cell of
+the positroid cell `p`. Cells are ordered first by dimension and then
+lexicographically. The input cell itself is excluded. The traversal follows
+codimension-one covers and deduplicates cells reached by different chains.
+"""
+function boundary_cells(input::AbstractVector{<:Integer};max_cells::Integer=1_000_000)
+    cells,_=_boundary_cells_with_dimensions(input;max_cells=max_cells)
+    return cells
+end
+
+"""
+    boundary_f_vector(p; include_cell=false, max_cells=1_000_000)
+
+Return the boundary f-vector `[f₀,f₁,…,f_{d-1}]`, where `fᵢ` is the
+number of `i`-dimensional proper boundary cells and `d` is the dimension of
+`p`. Set `include_cell=true` to append the entry `1` for the original
+`d`-dimensional cell, giving the f-vector of the whole closed cell.
+"""
+function boundary_f_vector(input::AbstractVector{<:Integer};
+                           include_cell::Bool=false,max_cells::Integer=1_000_000)
+    p=Int.(input)
+    _validate_decorated_permutation(p)
+    k=decorated_excedances(p)
+    dimension=dimensionOfPermutation(k,length(p),p)
+    _,dimensions=_boundary_cells_with_dimensions(p;max_cells=max_cells)
+    counts=zeros(Int,dimension+(include_cell ? 1 : 0))
+    for cell_dimension in dimensions
+        counts[cell_dimension+1]+=1
+    end
+    include_cell && (counts[end]=1)
+    return counts
 end
 
 function _validate_decorated_permutation(p::Vector{Int64})
@@ -3845,264 +3676,6 @@ function le_diagram(p::Vector{Int64}; as_tableau::Bool=true)
     return T
 end
 
-
-
-function is_Omega_symplectic(k::Int64, n::Int64, M::Set{Vector{Int64}})
-
-    m = n//2;
-
-    V = _subsets(Vector(1:n), k-2);
-
-    for S in V 
-
-        A_odd  = filter(t-> ((t + size(  filter( i-> i>t, S))[1]+size(  filter( i-> i>t+m, S))[1] ) % 2 == 1   && sort(unique(vcat(S,[t,m+t]))) in M)  ,   Vector(1:m) );
-        A_even = filter(t-> ((t + size(  filter( i-> i>t, S))[1]+size(  filter( i-> i>t+m, S))[1] ) % 2 == 0   && sort(unique(vcat(S,[t,m+t]))) in M)  ,   Vector(1:m) );
-
-        if  ( isempty(A_odd) &&  ! isempty(A_even) ) || (!isempty(A_odd) && isempty(A_even)) 
-          return false
-        end
-
-    end
-
-    return true
-end
-
-
-
-
-function is_Omega_symplecticTwo(k::Int64, n::Int64, M::Set{Vector{Int64}})
-
-    m = n//2;
-
-    V = _subsets(Vector(1:n), k-2);
-
-    for S in V 
-
-        A_odd  = filter(t-> ((t + size(  filter( i-> i>t, S))[1]+size(  filter( i-> i>t+m, S))[1] ) % 2 == 1   && sort(unique(vcat(S,[t,m+t]))) in M)  ,   Vector(1:m) );
-        A_even = filter(t-> ((t + size(  filter( i-> i>t, S))[1]+size(  filter( i-> i>t+m, S))[1] ) % 2 == 0   && sort(unique(vcat(S,[t,m+t]))) in M)  ,   Vector(1:m) );
-
-
-        if (size(A_odd)[1] in [0,1]) && (size(A_even)[1] in [0,1])
-
-            if  (isempty(A_odd) &&  ! isempty(A_even)) || (!isempty(A_odd) && isempty(A_even)) 
-                return false
-            end
-
-        end
-
-    end
-
-    return true
-end
-
-
-
-
-function symplectic_Omega_dimension(k::Int64, n::Int64, M::Set{Vector{Int64}})
-
-    if k > 2 return "Not implemented for k>2 yet!" end 
-
-    m = n//2;
-
-    A_odd  = filter(t-> (t%2==1 && [t,m+t] in M) == true, Vector(1:m));
-    A_even = filter(t-> (t%2==0 && [t,m+t] in M) == true, Vector(1:m));
-
-    if !isempty(A_odd) && !isempty(A_even)
-        return dimensionOfPositroid(k,n,M)-1;
-    end
-
-    return dimensionOfPositroid(k,n,M);
-end
-
-
-
-
-function modN(i,N)
-
-    if i > N
-        return i - N
-    elseif i < 1
-        return i + N
-    else
-        return i
-    end
-    
-end
-
-
-
-
-function is_E_symplectic(k::Int64, n::Int64, M::Set{Vector{Int64}})
-
-    m = n//2;
-
-    V = _subsets(Vector(1:n), k-2);
-
-    for S in V 
-
-        A_odd  = filter(t-> (t%2==1 && sort(unique(vcat(S,[t,2*m-t+1]))) in M) == true, Vector(1:m));
-        A_even = filter(t-> (t%2==0 && sort(unique(vcat(S,[t,2*m-t+1]))) in M) == true, Vector(1:m));
-
-        if  ( isempty(A_odd) &&  ! isempty(A_even) ) || (!isempty(A_odd) && isempty(A_even)) 
-            return false
-        end
-
-    end
-
-    return true
-end
-
-
-
-function symplectic_E_dimension(k::Int64, n::Int64, M::Set{Vector{Int64}})
-
-    if k > 2 return "Not implemented for k>2 yet!" end 
-
-    m = n//2;
-
-    A_odd  = filter(t-> (t%2==1 && [t,2*m-t+1] in M) == true, Vector(1:m));
-    A_even = filter(t-> (t%2==0 && [t,2*m-t+1] in M) == true, Vector(1:m));
-
-    if !isempty(A_odd) && !isempty(A_even)
-        return dimensionOfPositroid(k,n,M)-1;
-    end
-
-    return dimensionOfPositroid(k,n,M);
-end
-
-
-
-function up(k::Int64, n::Int64,  M::Set{Vector{Int64}})
-
-    if n!=2k+1 
-        error("n != 2k + 1");
-    end
-
-    newM = Set{Vector{Int64}}([]);
-
-    for I in M 
-        J = reduce(vcat, [I, [n+1]])
-        push!(newM, J);
-
-        Jc = filter( t-> ! (t in J) == true,  1:n+1);
-        push!(newM, Jc);
-    end
-
-    return newM;
-end
-
-
-function randomMatching(n::Int64)
-
-    if n%2 != 0
-        error("n is not even!!");
-    end
-
-    V = Vector(1:n);
-
-    C = Vector{Vector{Int64}}([]);
-    
-    for i in 1:n//2
-    
-        a = rand(V);
-        V = filter(j-> !(j==a)==true, V);
-        b = rand(V);
-        V = filter(j-> !(j==b)==true, V);
-    
-        C = append!(C, [[a,b]]);
-    end
-    
-
-    return permutationFromCycles(n, C);
-
-end
-
-
-
-
-
-
-
-
-
-
-
-
-function twistPerm(p)
-
-    m = size(p)[1];
-    n = trunc(Int64, m/2)
-    q = Vector{Int64}([]);
-
-    pp = abs.(p);
-
-    for i in 1:m
-
-        e = 1;
-
-        if pp[i] == -p[i]
-            e = -1;
-        end
-
-        push!(q, e* modN( pp[i]+n,m));
-
-    end
-
-
-    return q
-
-end
-
-
-
-
-
-function untwistPerm(p)
-
-    m = size(p)[1];
-    n = trunc(Int64, m/2)
-    q = Vector{Int64}([]);
-
-    pp = abs.(p);
-
-
-    for i in 1:m
-        
-        e = 1
-
-        if p[i] < 0
-            e = -1;
-        end
-
-        push!(q,  e * modN( pp[i] - n, m));
-    end
-
-    return q
-
-end
-
-function twistNecklace(I:: Vector{Vector{Int64}})
-
-    m = size(I)[1];
-    n = trunc(Int64,m/2);
-    
-    Res = Vector{Vector{Int64}}([]);
-
-    J = [I[ modN(i+n,m) ] for i in 1:m];
-
-    for i in 1:m
-
-        S = J[i];
-
-        rotS = [modN(x+n,m) for x in S]
-
-        push!(Res, filter( x-> !(x in rotS) , 1:m))
-
-    end
-
-    return Res
-
-end
 
 
 function _validate_twist_necklace(N::Vector{Vector{Int64}}, k::Int64, n::Int64)
@@ -4302,130 +3875,6 @@ end
 
 
 
-
-## Function that computes dimension of a decorated involution
-
-
-function dimensionOfLGperm(p::Vector{Int64})
-
-    q = abs.(twistPerm(p));
-
-    m = size(p)[1];
-    n = trunc(Int64, m/2);
-
-    chords = Vector{Vector{Int64}}([]);
-    
-    visited = Vector{Int64}([]);
-
-    for i in 1:m
-
-        if !(i in visited)
-
-            j = q[i];
-
-            if j != i
-
-                push!(chords, [i,j])
-                append!(visited, [i,j]);   
-            end
-
-            append!(visited, [i,j]);   
-        end
-
-    end
-
-
-    D = 0;
-
-    for c in chords
-        
-        D = D + min( modN(c[1] - c[2],m), modN(c[2] - c[1],m)  );
-
-    end
-
-    if size(chords)[1] > 1   
-
-            for a in 1:size(chords)[1]-1
-
-                for b in a+1:size(chords)[1]
-
-                    c1 = chords[a];
-                    c2 = chords[b];
-
-                    i,j = 1, modN(c1[2] - c1[1]+1,m)
-                    k,l = modN(c2[1] - c1[1]+1,m) , modN(c2[2] - c1[1]+1,m)    
-                    
-                    if min(k,l) < j && j < max(k,l) 
-
-                        D = D-1;
-
-                    end
-
-                end
-            end
-    end
-
-
-    return trunc(Int64, n*(n+1)/2) - D
-
-end
-
-
-
-
-
-
-
-
-
-
-function iota(I::Vector{Int64})
-
-    n = size(I)[1];
-    J = [modN(i+n,2*n) for i in I];    
-    return sort(filter( x-> !(x in J) , 1:2*n))
-
-end
-
-
-
-
-
-function eta(i::Int64,n::Int64)
-
-    modN(i+1,2*n)
-end
-
-
-function eta(I::Vector{Int64},n::Int64)
-    return sort([eta(i,n) for i in I])
-end
-
-
-
-
-function iota2(I::Vector{Int64})
-
-    n = size(I)[1];
-    J = eta(I,n)
-    return sort(filter( x-> !(x in J) , 1:2*n))
-
-end
-
-
-
-
-
-function is_cyclo_isotropic(k::Int64, n::Int64, M::Set{Vector{Int64}})
-
-    for I in M
-
-        if !(iota2(I) in M)
-            return false
-        end
-    end
-    return true
-end
 
 """
     decorated_permutations(n, k)

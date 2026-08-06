@@ -85,7 +85,7 @@ end
 
 function _web_session_response(session::_WebGraphSession,request;
                                iterations,restarts,max_n,max_internal,max_edges,
-                               max_history)
+                               max_history,max_boundary_cells)
     target=String(request.target)
     if request.method=="GET" && target=="/"
         return HTTP.Response(200,["Content-Type"=>"text/html; charset=utf-8"],
@@ -168,6 +168,27 @@ function _web_session_response(session::_WebGraphSession,request;
         catch err
             return _web_error(err)
         end
+    elseif request.method=="POST" && target=="/facets"
+        session.has_graph[] || return _web_error(ArgumentError("enter and draw a permutation first"))
+        try
+            body=lock(session.guard) do
+                _facets_payload(session.current[];
+                                iterations=iterations,restarts=restarts)
+            end
+            return _web_json_response(body)
+        catch err
+            return _web_error(err)
+        end
+    elseif request.method=="POST" && target=="/f-vector"
+        session.has_graph[] || return _web_error(ArgumentError("enter and draw a permutation first"))
+        try
+            body=lock(session.guard) do
+                _f_vector_payload(session.current[];max_cells=max_boundary_cells)
+            end
+            return _web_json_response(body)
+        catch err
+            return _web_error(err)
+        end
     elseif request.method=="POST" && target=="/undo"
         try
             body=lock(session.guard) do
@@ -235,6 +256,7 @@ function serve_positroids_web(;host="0.0.0.0",port=10000,
                               session_ttl=3600.0,max_sessions=200,
                               max_n=30,max_internal=250,max_edges=600,
                               max_history=30,max_body_bytes=1_000_000,
+                              max_boundary_cells=250_000,
                               secure_cookie=true,verbose=false)
     sessions=Dict{String,_WebGraphSession}()
     sessions_guard=ReentrantLock()
@@ -276,7 +298,8 @@ function serve_positroids_web(;host="0.0.0.0",port=10000,
         session.last_seen=time()
         response=_web_session_response(session,request;
             iterations=iterations,restarts=restarts,max_n=max_n,
-            max_internal=max_internal,max_edges=max_edges,max_history=max_history)
+            max_internal=max_internal,max_edges=max_edges,max_history=max_history,
+            max_boundary_cells=max_boundary_cells)
         if created
             cookie="positroids_session=$id; Path=/; HttpOnly; SameSite=Lax; Max-Age=$(round(Int,ttl))"
             secure_cookie && (cookie*="; Secure")

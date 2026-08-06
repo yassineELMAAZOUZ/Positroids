@@ -1,13 +1,7 @@
 # Positroids.jl
 
-Experimental Julia tools for positroids, decorated permutations, Grassmann
-necklaces, total positivity, and isotropic variants. The combinatorial core is
-dependency-free; Plots.jl is used only by `draw_chords`.
-
-This repository consolidates the Julia prototypes in `Positroids_code.jl` and
-`decorated_permutations.jl`. The historical Mathematica implementation
-(`positroids.m`) and demonstration notebook are retained as reference sources;
-see [the migration inventory](docs/src/mathematica-migration.md).
+Julia tools for positroids, decorated permutations, Grassmann necklaces, total
+positivity, plabic graphs, and boundary measurement.
 
 ## Install and load locally
 
@@ -95,6 +89,30 @@ Enumerate codimension-one boundary cells in the positroid poset:
 ```julia
 children = immediate_children([3, 4, 1, 2])
 ```
+
+Enumerate the entire proper boundary or count its cells by dimension:
+
+```julia
+boundary = boundary_cells([3, 4, 1, 2])
+f = boundary_f_vector([3, 4, 1, 2])
+# [6, 12, 10, 4], counting dimensions 0, 1, 2, 3
+
+closed_f = boundary_f_vector([3, 4, 1, 2]; include_cell=true)
+# [6, 12, 10, 4, 1]
+```
+
+The traversal deduplicates cells reached along different chains. Both functions
+accept `max_cells` to place an explicit limit on large boundary computations.
+
+In an interactive session, press **Show facets** to place these codimension-one
+permutations below the main graph. Each facet appears as copyable permutation
+text beside a compact, static plabic-graph thumbnail. The list is part of the
+main scrollable workspace and can be hidden with the same button. Facet
+thumbnails are deliberately read-only: square moves, strands,
+weights, and boundary measurements continue to apply only to the original
+large graph. **Compute f-vector** traverses the entire proper boundary and shows
+only its copyable f-vector and total cell count; it never constructs descendant
+graphs.
 
 Perform a square move on a displayed square face:
 
@@ -218,7 +236,11 @@ edge weights. **Hide face labels** independently hides the combinatorial
 `k`-subset labels. Right-click a face or edge to assign, rename, or clear a
 parameter directly on the drawing; it appears in blue at that face or edge and
 stays synchronized with the sidebar. Unassigned weights equal one. One face is
-retained as the dependent reference face for face-weight coordinates. The
+retained as the dependent reference face for face-weight coordinates. One
+context-sensitive button assigns `s_1,s_2,\ldots` to all independent faces in
+face mode or `t_1,t_2,\ldots` to all edges in edge mode. Only the selected
+mode's parameters are drawn; the other assignments are hidden but retained.
+Individual values can still be changed with the sidebar or right-click menu. The
 resulting `k × n` matrix or its Plücker coordinates are typeset with
 LaTeX below the graph in the same scrollable workspace and can be copied in
 Julia or Macaulay2 syntax. A source-set field chooses the `k` pivot columns; admissible
@@ -243,11 +265,7 @@ lollipops are counterclockwise and contribute to none.
 
 - **Core:** decorated permutations, cyclic/Gale order, necklace/positroid
   conversions, enumeration, cell dimensions, and Le-diagrams.
-- **Experimental:** twists; orthogonal, symplectic, and cyclic-isotropy tests;
-  specialized dimension formulas and face predicates.
-- **Reference only:** Mathematica boundary-poset traversal, symbolic
-  matrix/residue machinery, and scattering-amplitude code.
-  These have not yet been ported and are not silently advertised as Julia APIs.
+- **Experimental:** matrix twists and some legacy necklace helpers.
 
 The current basis representation is `Set{Vector{Int64}}`; because vectors are
 mutable keys, callers must not mutate a basis after inserting it into a set.
@@ -262,6 +280,3 @@ groups, limitations, and migration status.
 using Pkg
 Pkg.test()
 ```
-
-The unrelated Java hyperbolic-coloring README previously at the repository root
-is preserved as `HYPERBOLIC_README.md`.

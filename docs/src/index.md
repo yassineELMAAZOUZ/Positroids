@@ -92,34 +92,30 @@ Mathematica implementation and published convention choices.
 
 `draw_chords(p)` visualizes the chord diagram through Plots/GR.
 
-## Isotropic variants
-
-The package contains research-stage predicates and formulas:
-
-- orthogonal membership and dimension: `is_orthogonal`,
-  `orthogonal_dimension`, `orthogonal_dimensionOfPermutation`;
-- symplectic membership: `is_Omega_symplectic`,
-  `is_Omega_symplecticTwo`, `is_E_symplectic`;
-- specialized symplectic dimensions: `symplectic_Omega_dimension`,
-  `symplectic_E_dimension` (currently only implemented for `k ≤ 2`);
-- twists/involutions and Lagrangian dimension: `twistPerm`, `untwistPerm`,
-  `twistNecklace`, `dimensionOfLGperm`;
-- cyclic isotropy: `iota`, `iota2`, `eta`, `is_cyclo_isotropic`.
-
-These functions preserve the prototype algorithms and should be treated as
-experimental until examples and theorem-level regression tests are added.
-
 ## Boundary helpers
 
-`is_child` compares basis containment. `is_codim1_face` combines containment
-with the prototype orthogonal-dimension calculation. Despite their names, these
-do not yet reproduce the Mathematica package's complete `boundary` and
-`inverseBoundary` machinery.
+`is_child` compares basis containment.
 
 `immediate_children(p)` enumerates the ordinary positroid-poset covers below
 `p`: same-rank cells of dimension one less whose bases are contained in those of
-`p`. It currently checks all decorated permutations of the same `(k,n)`, so it
-is reliable for moderate `n` but scales factorially.
+`p`. It generates bounded-affine Bruhat covers directly instead of checking all
+decorated permutations of the same `(k,n)`.
+
+`boundary_cells(p)` follows these covers transitively and returns every distinct
+proper boundary cell, ordered by dimension and permutation. The original cell
+is excluded. `boundary_f_vector(p)` returns `[f₀,f₁,…,f_{d-1}]`, where
+`fᵢ` counts the `i`-dimensional boundary cells. Pass `include_cell=true` to
+append the original top-dimensional cell, or set `max_cells` to control the
+maximum traversal size.
+
+The interactive page exposes the same calculation through **Show facets**. It
+adds a scrollable section below the main drawing with the facet permutation on
+the left and a compact plabic graph on the right. These graphs
+are static reference thumbnails; all edits, strands, weights, and boundary
+measurement calculations remain attached exclusively to the original graph.
+The separate **Compute f-vector** control traverses the full proper boundary and
+shows only the vector and total number of cells; it does not draw boundary-cell
+graphs.
 
 ## Plabic graphs
 
@@ -281,6 +277,12 @@ the product of all face weights is one, the first face is the dependent
 product-inverse coordinate and every other face variable can be renamed. In
 **Edge variables** mode each graph edge has its own input; an empty input means
 weight `1`. Right-click an edge to assign its parameter directly on the graph.
+The adjacent bulk-assignment button follows the selected mode: in face mode it
+assigns `s_1,s_2,\ldots` to every independent face in displayed order, while in
+edge mode it assigns `t_1,t_2,\ldots` to every edge. The reference face remains
+dependent, as required by the product-one relation. Only parameters belonging
+to the selected mode are drawn; switching modes hides but retains the other
+assignments. Manual sidebar and right-click editing remain available.
 
 The graph's source set and an almost-perfect matching determine a perfect
 orientation. Directed path sums, including the rational resolvent when the

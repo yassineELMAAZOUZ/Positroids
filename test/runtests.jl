@@ -217,6 +217,29 @@ end
 
 
 @testset "positroid poset children" begin
+    function exhaustive_children(parent)
+        n=length(parent)
+        k=decorated_excedances(parent)
+        d=dimensionOfPermutation(k,n,parent)
+        d==0 && return Vector{Vector{Int}}()
+        parent_bases=fromDecoratedPermToPositroid(k,n,parent)
+        result=Vector{Vector{Int}}()
+        for candidate in decorated_permutations(n,k)
+            dimensionOfPermutation(k,n,candidate)==d-1 || continue
+            child_bases=fromDecoratedPermToPositroid(k,n,candidate)
+            isempty(setdiff(child_bases,parent_bases)) || continue
+            push!(result,candidate)
+        end
+        sort!(result)
+        return result
+    end
+
+    # The bounded-affine cover generator agrees with the defining exhaustive
+    # basis-containment calculation on every small decorated permutation.
+    for n in 1:4, k in 0:n, parent in decorated_permutations(n,k)
+        @test immediate_children(parent)==exhaustive_children(parent)
+    end
+
     p = [3, 4, 1, 2]
     children = immediate_children(p)
     @test !isempty(children)
@@ -225,6 +248,22 @@ end
     @test all(dimensionOfPermutation(k, length(p), q) == d-1 for q in children)
     @test all(is_child(q, p) === true for q in children)
     @test immediate_children([-1, -2]) == Vector{Vector{Int}}()
+    large_children=immediate_children([5,6,7,8,1,2,3,4])
+    @test length(large_children)==8
+    @test all(dimensionOfPermutation(4,8,q)==15 for q in large_children)
+
+    boundary=boundary_cells(p)
+    @test length(boundary)==32
+    @test length(Set(Tuple.(boundary)))==length(boundary)
+    @test all(is_child(q,p)===true for q in boundary)
+    boundary_dimensions=[dimensionOfPermutation(k,length(p),q) for q in boundary]
+    @test issorted(boundary_dimensions)
+    @test boundary_f_vector(p)==[6,12,10,4]
+    @test boundary_f_vector(p;include_cell=true)==[6,12,10,4,1]
+    @test boundary_cells([-1,-2])==Vector{Vector{Int}}()
+    @test boundary_f_vector([-1,-2])==Int[]
+    @test boundary_f_vector([-1,-2];include_cell=true)==[1]
+    @test_throws ArgumentError boundary_cells(p;max_cells=3)
 end
 
 
@@ -383,6 +422,47 @@ end
     @test !occursin("middle=",morph_source)
     @test !occursin("svg.style.opacity",Positroids._INTERACTIVE_PLABIC_HTML)
     @test !occursin("#graph{transition:opacity",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("id=\"assign-all-variables\"",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("edgeWeights.set(j+1,'t_'+(j+1))",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("assignAllVariablesButton.addEventListener('click',assignAllVariables)",
+                   Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("assignAllVariablesButton.disabled=!!s.blank||",
+                   Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("faceWeights.set(face.id,'s_'+index)",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("if(face.id===1)continue",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("faceMode?'Assign s₁,s₂,… to faces':'Assign t₁,t₂,… to edges'",
+                   Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("if(weightMode.value==='face')for(const f of s.faces)",
+                   Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("if(weightMode.value==='edge')s.edges.forEach",
+                   Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("id=\"facets-toggle\"",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("id=\"facets-panel\"",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("fetch('/facets'",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("facetsToggleButton.addEventListener('click',toggleFacets)",
+                   Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin(".facet-graph{display:block;width:100%;height:190px;pointer-events:none}",
+                   Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("id=\"f-vector-toggle\"",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("id=\"f-vector-panel\"",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("fetch('/f-vector'",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("fVectorToggleButton.addEventListener('click',toggleFVector)",
+                   Positroids._INTERACTIVE_PLABIC_HTML)
+    @test !occursin("<svg",match(r"<section id=\"f-vector-panel\".*?</section>"s,
+                                  Positroids._INTERACTIVE_PLABIC_HTML).match)
+    facets_payload=Positroids.JSON.parse(Positroids._facets_payload(
+        plabic_graph([3,4,1,2]);iterations=700,restarts=5))
+    @test Int.(facets_payload["parent"])==[3,4,1,2]
+    @test length(facets_payload["children"])==length(immediate_children([3,4,1,2]))
+    @test all(length(facet["vertices"])>=facet["n"] for facet in facets_payload["children"])
+    @test all(length(facet["edges"])>0 for facet in facets_payload["children"])
+    @test sort([Int.(facet["permutation"]) for facet in facets_payload["children"]])==
+          immediate_children([3,4,1,2])
+    f_vector_payload=Positroids.JSON.parse(Positroids._f_vector_payload(
+        plabic_graph([3,4,1,2]);max_cells=1000))
+    @test f_vector_payload["dimension"]==4
+    @test Int.(f_vector_payload["counts"])==[6,12,10,4]
+    @test f_vector_payload["total_boundary_cells"]==32
     measurement=Positroids._plabic_boundary_measurement(plabic_graph([3,4,1,2]);
         mode=:edge,weights=Dict(1=>"a"),iterations=1000,restarts=8)
     @test measurement.sources==[1,2]
