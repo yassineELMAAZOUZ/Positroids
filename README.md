@@ -8,19 +8,6 @@ This repository consolidates the Julia prototypes in `Positroids_code.jl` and
 `decorated_permutations.jl` and the Mathematica implementation
 (`positroids.m`) of Jacob L. Bourjaily.
 
-## Install and load locally
-
-From Julia in this directory:
-
-```julia
-using Pkg
-Pkg.activate(".")
-Pkg.instantiate()
-using Positroids
-```
-
-## Quick start
-
 
 ### Install and load locally
 
