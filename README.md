@@ -11,4 +11,5 @@ using Pkg;
 Pkg.add(url="https://github.com/yassineELMAAZOUZ/Positroids.git");
 
 using Positroids;
+
 interactive_session();
