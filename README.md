@@ -6,9 +6,9 @@ Julia tools for positroids and plabic graphs.
 
 In Julia:
 
-using Pkg
+using Pkg;
 
-Pkg.add(url="https://github.com/yassineELMAAZOUZ/Positroids.git")
+Pkg.add(url="https://github.com/yassineELMAAZOUZ/Positroids.git");
 
-using Positroids
-interactive_session()
+using Positroids;
+interactive_session();
