@@ -20,3 +20,8 @@ Download the folder. Then do the following:
    Then in the Julia REPL:
    
           Julia> using Positroids; interactive_session();
+
+
+
+Fair warning: This is still work in progress!! If you encounter any bugs or errors feel free to let me know and I can try to fix it.
+
