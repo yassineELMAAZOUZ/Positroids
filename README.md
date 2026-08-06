@@ -14,6 +14,7 @@ This repository consolidates the Julia prototypes in `Positroids_code.jl` and
 Download the folder. Then do the following:
 
 1- You first need to have Julia installed.
+
 2- In your terminal: 
           > julia --project="path_to_positroids_folder"
    Then in the Julia REPL:
