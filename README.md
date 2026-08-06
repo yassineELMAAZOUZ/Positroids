@@ -4,9 +4,10 @@ Julia tools for positroids and plabic graphs.
 
 ## Install and load locally
 
-From Julia in this directory:
+In Julia:
 
 using Pkg
+
 Pkg.add(url="https://github.com/yassineELMAAZOUZ/Positroids.git")
 
 using Positroids
