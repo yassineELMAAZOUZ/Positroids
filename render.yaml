@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: positroids
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeployTrigger: commit

@@ -1,0 +1,10 @@
+.git
+.DS_Store
+docs
+test
+*.nb
+*.m
+*.m2
+*.java
+*.jl.cov
+*.jl.mem
