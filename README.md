@@ -23,5 +23,5 @@ Download the folder. Then do the following:
 
 
 
-Fair warning: This is still work in progress!! If you encounter any bugs or errors feel free to let me know and I can try to fix it.
+<span style="color: red;">Fair warning</span>: This is still work in progress!! If you encounter any bugs or errors feel free to let me know and I can try to fix it.
 
