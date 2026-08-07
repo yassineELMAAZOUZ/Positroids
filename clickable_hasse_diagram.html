@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clickable Hasse Diagram</title>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    #hsPage {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 460px;
+      width: 100%;
+      height: 100vh;
+    }
+    #hsNetwork {
+      width: 100%;
+      height: 100%;
+      border-right: 1px solid #cccccc;
+    }
+    #hsPanel {
+      box-sizing: border-box;
+      height: 100%;
+      padding: 22px;
+      overflow-y: auto;
+      background: #f7f7f7;
+    }
+    #hsPanel h2 {
+      margin-top: 0;
+    }
+    .hsHeading {
+      margin-top: 22px;
+      margin-bottom: 7px;
+      font-weight: bold;
+    }
+    .hsCodeBox {
+      padding: 12px;
+      border: 1px solid #cccccc;
+      border-radius: 6px;
+      background: white;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-family: monospace;
+      line-height: 1.4;
+    }
+    #hsCopyButton {
+      margin-top: 10px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    @media (max-width: 900px) {
+      #hsPage {
+        grid-template-columns: 1fr;
+        grid-template-rows: 65vh 35vh;
+      }
+      #hsNetwork {
+        border-right: none;
+        border-bottom: 1px solid #cccccc;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="hsPage">
+    <div id="hsNetwork"></div>
+    <div id="hsPanel">
+      <h2 id="hsNodeTitle">Select a vertex</h2>
+      <div class="hsHeading">Ideal</div>
+    </div>
+  </div>
+  <script>
+    ]);
+    ]);
+    const hsOptions = {
+      layout: {
+        hierarchical: {
+          enabled: true,
+          direction: 'DU',
+          sortMethod: 'directed',
+          levelSeparation: 150,
+          nodeSpacing: 170,
+          treeSpacing: 220
+        }
+      },
+      physics: false,
+      interaction: {
+        hover: true,
+        navigationButtons: true,
+        keyboard: true
+      },
+      nodes: {
+        shape: 'box',
+        margin: 10,
+        widthConstraint: {maximum: 125},
+        font: {size: 15}
+      },
+      edges: {
+        smooth: false,
+        width: 1.4
+      }
+    };
+    let hsSelectedIdeal = '';
+    hsNetwork.on('click', function(hsParameters) {
+      if (hsParameters.nodes.length === 0) return;
+      hsSelectedIdeal = hsNodeData.ideal;
+    });
+      if (hsSelectedIdeal === '') return;
+    });
+  </script>
+</body>
+</html>

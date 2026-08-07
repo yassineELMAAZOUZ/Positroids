@@ -157,6 +157,39 @@ function _web_session_response(session::_WebGraphSession,request;
         catch err
             return _web_error(err)
         end
+    elseif request.method=="POST" && target=="/relabel"
+        session.has_graph[] || return _web_error(ArgumentError("enter and draw a permutation first"))
+        try
+            body=lock(session.guard) do
+                shift=parse(Int,strip(String(request.body)))
+                replacement=_cyclically_relabel_plabic_graph(session.current[],shift)
+                _web_push_history!(session,session.current[],max_history)
+                empty!(session.future)
+                session.current[]=replacement
+                _interactive_history_json(
+                    _interactive_state_json(replacement;iterations=iterations,restarts=restarts),
+                    true,false)
+            end
+            return _web_json_response(body)
+        catch err
+            return _web_error(err)
+        end
+    elseif request.method=="POST" && target=="/swap-colors"
+        session.has_graph[] || return _web_error(ArgumentError("enter and draw a permutation first"))
+        try
+            body=lock(session.guard) do
+                replacement=_swap_plabic_colors(session.current[])
+                _web_push_history!(session,session.current[],max_history)
+                empty!(session.future)
+                session.current[]=replacement
+                _interactive_history_json(
+                    _interactive_state_json(replacement;iterations=iterations,restarts=restarts),
+                    true,false)
+            end
+            return _web_json_response(body)
+        catch err
+            return _web_error(err)
+        end
     elseif request.method=="POST" && target=="/measurement"
         session.has_graph[] || return _web_error(ArgumentError("enter and draw a permutation first"))
         try

@@ -8,6 +8,16 @@ include("screenshot_reduction_fixture.jl")
     @test [-1, 3, 4, 2] in decorated_permutations(4, 3)
     @test decorated_excedances([-1, 3, 4, 2]) == 3
     @test countExceedences([-1, 3, 4, 2]) == 3
+    @test decorated_excedances([-1,2,3,4])==1 # -1 is a coloop
+    @test decorated_excedances([1,2,3,4])==0  # positive fixed points are loops
+    @test Positroids._lollipop_color(-1,1)==:white
+    @test Positroids._lollipop_color(1,1)==:black
+    @test Positroids._lollipop_decoration(:white,1)==-1
+    @test Positroids._lollipop_decoration(:black,1)==1
+    @test positroid_rank([4,3,1,5,2])==2
+    @test positroid_rank([3,5,2,1,4];permutation_convention=:source)==2
+    @test_throws ArgumentError positroid_rank([4,3,1,5,2];
+                                               permutation_convention=:unknown)
 end
 
 @testset "necklace/permutation round trips" begin
@@ -18,6 +28,8 @@ end
         M = fromDecoratedPermToPositroid(k, n, p)
         @test fromPositroidToPermutation(n, M) == p
     end
+    @test fromDecoratedPermToPositroid(2,4,[-1,-2,3,4])==Set([[1,2]])
+    @test fromDecoratedPermToPositroid(0,4,[1,2,3,4])==Set([Int[]])
 end
 
 @testset "validation" begin
@@ -51,10 +63,52 @@ end
         @test all(degrees[1:n] .== 1)
         @test all(d > 0 && d != 2 for d in degrees[(n + 1):end])
         @test all(c in (:boundary, :black, :white) for c in G.colors)
+        for i in 1:n
+            abs(p[i])==i || continue
+            neighbor=only([u==i ? v : u for (u,v) in G.edges if u==i || v==i])
+            @test G.colors[neighbor]==(p[i]<0 ? :white : :black)
+        end
         @test is_bipartite(G)
         @test is_reduced(G)
         @test validate_plabic_graph(G)
     end
+end
+
+@testset "interactive graph transforms" begin
+    p=[4,3,1,5,2]
+    G=plabic_graph(p)
+    shift=2
+    H=Positroids._cyclically_relabel_plabic_graph(G,shift)
+    relabel(v)=v<=G.n ? mod1(v+shift,G.n) : v
+    expected_edges=sort(unique([(min(relabel(a),relabel(b)),max(relabel(a),relabel(b)))
+                                for (a,b) in G.edges]))
+    @test H.edges==expected_edges
+    @test all(H.positions[mod1(i+shift,G.n)]==G.positions[i] for i in 1:G.n)
+    @test is_bipartite(H)
+    @test is_reduced(H)
+    @test last.(graph_trips(plabic_embedding(H;iterations=500,restarts=4)))==
+          abs.(H.permutation)
+    restored=Positroids._cyclically_relabel_plabic_graph(H,-shift)
+    @test restored.permutation==G.permutation
+    @test restored.colors==G.colors
+    @test restored.edges==sort(G.edges)
+    @test restored.positions==G.positions
+
+    swapped=Positroids._swap_plabic_colors(G)
+    @test swapped.permutation==[3,5,2,1,4]
+    @test swapped.colors==[color==:black ? :white : color==:white ? :black : color
+                            for color in G.colors]
+    @test is_bipartite(swapped)
+    @test is_reduced(swapped)
+    @test last.(graph_trips(plabic_embedding(swapped;iterations=500,restarts=4)))==
+          abs.(swapped.permutation)
+    swapped_back=Positroids._swap_plabic_colors(swapped)
+    @test swapped_back.permutation==G.permutation
+    @test swapped_back.colors==G.colors
+    @test swapped_back.edges==G.edges
+    @test swapped_back.positions==G.positions
+    @test Positroids._swap_plabic_colors(plabic_graph([-1,-2,3,4])).permutation==
+          [1,2,-3,-4]
 end
 
 
@@ -211,6 +265,8 @@ end
     Z = [1 0 0; 0 1 0; 0 0 1; 1 -1 1]
     @test N * Z == ["1" "w2 + w4" "w2*w3";
                      "w1" "1 - w1" "w1 + w3"]
+    @test parametrization_matrix(bridge_parametrization([-1,-2,3,4]))==
+          [1.0 0.0 0.0 0.0;0.0 1.0 0.0 0.0]
     @test_throws DimensionMismatch symbolic_product(N, ones(Int, 3, 2))
     @test_throws ArgumentError parametrization_matrix(B, [1.0])
 end
@@ -234,11 +290,28 @@ end
         return result
     end
 
-    # The bounded-affine cover generator agrees with the defining exhaustive
-    # basis-containment calculation on every small decorated permutation.
+    # The private source-convention generator agrees with the defining
+    # exhaustive basis-containment calculation. The public function converts
+    # target/trip permutations in and out, so callers never need `invperm`.
     for n in 1:4, k in 0:n, parent in decorated_permutations(n,k)
-        @test immediate_children(parent)==exhaustive_children(parent)
+        source_children=exhaustive_children(parent)
+        @test Positroids._immediate_children_source(parent)==source_children
+        target_parent=Positroids._decorated_inverse(parent)
+        expected_target=sort([Positroids._decorated_inverse(child)
+                              for child in source_children])
+        @test immediate_children(target_parent)==expected_target
     end
+
+    asymmetric=[4,3,1,5,2]
+    asymmetric_children=immediate_children(asymmetric)
+    @test length(asymmetric_children)==7
+    @test [4,-2,1,5,3] ∉ asymmetric_children
+    @test all(Positroids._target_rank(child)==2 for child in asymmetric_children)
+    @test Set(asymmetric_children)==Set([
+        [-1,3,4,5,2],[4,1,3,5,2],[2,3,1,5,4],[4,2,1,5,3],
+        [4,3,1,2,5],[5,3,1,4,2],[4,3,2,5,1]])
+    @test length(boundary_cells(asymmetric))==50
+    @test boundary_f_vector(asymmetric)==[8,18,17,7]
 
     p = [3, 4, 1, 2]
     children = immediate_children(p)
@@ -256,7 +329,7 @@ end
     @test length(boundary)==32
     @test length(Set(Tuple.(boundary)))==length(boundary)
     @test all(is_child(q,p)===true for q in boundary)
-    boundary_dimensions=[dimensionOfPermutation(k,length(p),q) for q in boundary]
+    boundary_dimensions=[Positroids._target_cell_dimension(q) for q in boundary]
     @test issorted(boundary_dimensions)
     @test boundary_f_vector(p)==[6,12,10,4]
     @test boundary_f_vector(p;include_cell=true)==[6,12,10,4,1]
@@ -264,6 +337,64 @@ end
     @test boundary_f_vector([-1,-2])==Int[]
     @test boundary_f_vector([-1,-2];include_cell=true)==[1]
     @test_throws ArgumentError boundary_cells(p;max_cells=3)
+end
+
+@testset "projection Jacobian ranks on positroid boundaries" begin
+    # Projection routines use the user's target/anti-excedance convention by
+    # default. Z is [I_4; -1 1 -1 1].
+    p=[4,3,1,5,2]
+    Z=[1 0 0 0;
+       0 1 0 0;
+       0 0 1 0;
+       0 0 0 1;
+      -1 1 -1 1]
+
+    parent=projection_jacobian_report(p,Z;samples=1)
+    @test parent.permutation==p
+    @test parent.source_permutation==[3,5,2,1,4]
+    @test parent.permutation_convention==:target
+    @test parent.rank_k==2
+    @test parent.dimension==4
+    @test parent.jacobian_rank==4
+    @test parent.certificate==:full_rank
+
+    facets=boundary_projection_jacobian_report(p,Z;samples=1)
+    @test length(facets)==7
+    bad=filter(result->!result.full_rank,facets)
+    @test length(bad)==1
+    @test only(bad).permutation==[-1,3,4,5,2]
+    @test only(bad).source_permutation==[-1,5,2,3,4]
+    @test only(bad).jacobian_rank==2
+    @test only(bad).rank_upper_bound==2
+    @test only(bad).certificate==:rank_drop
+
+    boundary=boundary_projection_jacobian_report(p,Z;strata=:boundary,samples=1)
+    @test length(boundary)==50
+    lower_faces=filter(result->result.dimension<3,boundary)
+    @test all(result->result.full_rank,lower_faces)
+
+    poset=projection_boundary_poset(p,Z;samples=1)
+    @test length(poset.nodes)==51
+    @test poset.parent==Tuple(p)
+    @test poset.source_parent==(3,5,2,1,4)
+    @test poset.permutation_convention==:target
+    @test poset.f_vector==[8,18,17,7,1]
+    @test poset.nodes[1].label=="Pi"
+    @test all(edge->poset.nodes[edge.upper].dimension==
+                    poset.nodes[edge.lower].dimension+1,poset.covers)
+    @test length(poset.covers)==length(Set((edge.upper,edge.lower)
+                                           for edge in poset.covers))
+    @test only(filter(node->node.certificate==:rank_drop,poset.nodes)).label=="F1"
+    @test_throws DimensionMismatch projection_jacobian_report(p,Z[1:4,:])
+    @test_throws ArgumentError boundary_projection_jacobian_report(p,Z;strata=:unknown)
+    @test_throws ArgumentError projection_jacobian_report(
+        p,Z;permutation_convention=:unknown)
+
+    source_parent=projection_jacobian_report(
+        [3,5,2,1,4],Z;samples=1,permutation_convention=:source)
+    @test source_parent.rank_k==2
+    @test source_parent.dimension==parent.dimension
+    @test source_parent.jacobian_rank==parent.jacobian_rank
 end
 
 
@@ -397,6 +528,10 @@ end
     @test occursin("\"dual_edges\":[",state)
     @test occursin("\"dual_black_faces\":[",state)
     @test occursin("\"id\":1,\"label\":[2,4]",state)
+    asymmetric_state=Positroids.JSON.parse(Positroids._interactive_state_json(
+        plabic_graph([4,3,1,5,2]);iterations=700,restarts=5))
+    @test asymmetric_state["k"]==2
+    @test length(asymmetric_state["default_sources"])==2
     boundary_dual=Positroids._boundary_dual_positions(E)
     @test length(boundary_dual)==4
     @test all(isapprox(hypot(point...),1.0;atol=1e-12)
@@ -423,6 +558,17 @@ end
     @test !occursin("svg.style.opacity",Positroids._INTERACTIVE_PLABIC_HTML)
     @test !occursin("#graph{transition:opacity",Positroids._INTERACTIVE_PLABIC_HTML)
     @test occursin("id=\"assign-all-variables\"",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("id=\"view-rotation\"",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("id=\"indices-minus\"",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("id=\"indices-plus\"",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("id=\"swap-colors\"",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("fetch('/relabel'",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("fetch('/swap-colors'",Positroids._INTERACTIVE_PLABIC_HTML)
+    @test occursin("inverseViewPoint(px,py)",Positroids._INTERACTIVE_PLABIC_HTML)
+    relabel_source=match(r"async function cyclicallyRelabel.*?async function swapAllColors"s,
+                         Positroids._INTERACTIVE_PLABIC_HTML).match
+    @test occursin("render(await r.json())",relabel_source)
+    @test !occursin("transitionState",relabel_source)
     @test occursin("edgeWeights.set(j+1,'t_'+(j+1))",Positroids._INTERACTIVE_PLABIC_HTML)
     @test occursin("assignAllVariablesButton.addEventListener('click',assignAllVariables)",
                    Positroids._INTERACTIVE_PLABIC_HTML)
@@ -458,6 +604,12 @@ end
     @test all(length(facet["edges"])>0 for facet in facets_payload["children"])
     @test sort([Int.(facet["permutation"]) for facet in facets_payload["children"]])==
           immediate_children([3,4,1,2])
+    asymmetric_facets=Positroids.JSON.parse(Positroids._facets_payload(
+        plabic_graph([4,3,1,5,2]);iterations=600,restarts=4))
+    asymmetric_permutations=[Int.(facet["permutation"])
+                             for facet in asymmetric_facets["children"]]
+    @test [4,-2,1,5,3] ∉ asymmetric_permutations
+    @test all(Positroids._target_rank(child)==2 for child in asymmetric_permutations)
     f_vector_payload=Positroids.JSON.parse(Positroids._f_vector_payload(
         plabic_graph([3,4,1,2]);max_cells=1000))
     @test f_vector_payload["dimension"]==4

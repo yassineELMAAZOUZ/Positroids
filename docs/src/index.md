@@ -3,8 +3,9 @@
 ## Mathematical conventions
 
 A decorated permutation is stored in signed one-line notation. The vector entry
-`p[i] = -i` denotes a negatively decorated fixed point; `p[i] = i` denotes a
-positively decorated fixed point. Nonfixed entries must be positive. This is the
+`p[i] = -i` denotes a negatively decorated **coloop** and is represented by a
+white lollipop; `p[i] = i` denotes a positively decorated **loop** and is
+represented by a black lollipop. Nonfixed entries must be positive. This is the
 convention used by the original Julia prototype. It differs from the bounded
 affine-permutation notation used by the Mathematica package, where values may be
 shifted by `n`.
@@ -17,7 +18,8 @@ position. A positroid is currently a `Set{Vector{Int64}}` of sorted bases.
 | Purpose | Julia API | Status |
 |---|---|---|
 | Enumerate decorated permutations | `decorated_permutations(n, k)` | Tested core |
-| Count excedances/rank | `decorated_excedances`, `countExceedences` | Tested core |
+| Plabic/face-label rank | `positroid_rank` | Tested core |
+| Historical source excedances | `decorated_excedances`, `countExceedences` | Tested core |
 | Cyclic order and intervals | `shiftedOrder`, `cyclicInterval` | Core, legacy names |
 | Gale comparisons | `iCompare`, `iCompareLists` | Core, legacy names |
 | Minimum necklace | `minGrassmannNecklace(p)` or `(n, bases)` | Tested core |
@@ -99,7 +101,10 @@ Mathematica implementation and published convention choices.
 `immediate_children(p)` enumerates the ordinary positroid-poset covers below
 `p`: same-rank cells of dimension one less whose bases are contained in those of
 `p`. It generates bounded-affine Bruhat covers directly instead of checking all
-decorated permutations of the same `(k,n)`.
+decorated permutations of the same `(k,n)`. Boundary helpers default to the
+target/trip convention used by plabic graphs, so `positroid_rank(p)` is the
+common size of the displayed source-left face labels. Use
+`permutation_convention=:source` only for historical source-form input.
 
 `boundary_cells(p)` follows these covers transitively and returns every distinct
 proper boundary cell, ordered by dimension and permutation. The original cell
@@ -121,8 +126,8 @@ graphs.
 
 `plabic_graph(p)` constructs a deterministic bridge graph from a decorated
 permutation. It ports the default recursive bridge construction used by the
-Mathematica package. Positive and negative decorated fixed points become black
-and white lollipops respectively. The result is a `PlabicGraph` containing the
+Mathematica package. Negative coloop decorations become white lollipops, while
+positive loop decorations become black lollipops. The result is a `PlabicGraph` containing the
 bicolored vertices, edges, disk positions, bridge decomposition, and input trip
 permutation certificate.
 

@@ -8,7 +8,7 @@ import UUIDs
 
 const PACKAGE_BUILD = v"1.3.0"
 
-export decorated_permutations, decorated_excedances,
+export decorated_permutations, decorated_excedances, positroid_rank,
        shiftedOrder, cyclicInterval, iCompare, iCompareLists,
        minGrassmannNecklace, maxGrassmannNecklace, reverseGrassmannNecklace,
        fromNecklaceToPositroid, fromNecklaceToDecoratedPermutation,
@@ -32,6 +32,8 @@ export decorated_permutations, decorated_excedances,
        symbolic_product, parameter_names,
        is_child
 export immediate_children, boundary_cells, boundary_f_vector
+export projection_jacobian_report, boundary_projection_jacobian_report,
+       projection_boundary_poset
 
 function _load_plotting()
     return nothing
@@ -75,6 +77,43 @@ Base.show(io::IO, session::InteractivePlabicGraph) =
 
 abstract type AbstractCellParametrization end
 
+# One convention is used everywhere in the package:
+#   -i  = coloop = white lollipop,  +i = loop = black lollipop.
+_is_coloop(p::AbstractVector{<:Integer},i::Integer)=p[i]==-i
+_is_loop(p::AbstractVector{<:Integer},i::Integer)=p[i]==i
+_source_rank(p::AbstractVector{<:Integer})=
+    count(i->i<abs(p[i]) || _is_coloop(p,i),eachindex(p))
+_target_rank(p::AbstractVector{<:Integer})=
+    count(i->abs(p[i])<i || _is_coloop(p,i),eachindex(p))
+
+"""
+    positroid_rank(p; permutation_convention=:target)
+
+Return the rank (the common size of source-left face labels). The default is
+the target/trip convention used by `plabic_graph`; use `:source` for the
+historical source convention.
+"""
+function positroid_rank(input::AbstractVector{<:Integer};
+                        permutation_convention::Symbol=:target)
+    p=Int.(input)
+    _validate_decorated_permutation(p)
+    permutation_convention==:target && return _target_rank(p)
+    permutation_convention==:source && return _source_rank(p)
+    throw(ArgumentError("permutation_convention must be :target or :source"))
+end
+
+function _lollipop_color(decoration::Integer,i::Integer)
+    decoration==-i && return :white
+    decoration==i && return :black
+    throw(ArgumentError("$decoration is not a decoration of fixed point $i"))
+end
+
+function _lollipop_decoration(color::Symbol,i::Integer)
+    color==:white && return -i
+    color==:black && return i
+    throw(ArgumentError("a lollipop must be :white or :black, not $color"))
+end
+
 """A positive bridge-coordinate chart with one parameter per bridge."""
 struct BridgeParametrization <: AbstractCellParametrization
     permutation::Vector{Int}
@@ -100,7 +139,7 @@ function _inverse_decorated_permutation(p::Vector{Int})
         inverse[abs(p[i])] = i
     end
     for i in 1:n
-        p[i] == -i && (inverse[i] = -i)
+        _is_coloop(p,i) && (inverse[i] = -i)
     end
     return inverse
 end
@@ -555,8 +594,7 @@ function is_reduced(G::PlabicGraph)
     degrees = _plabic_degrees(G)
     all(degrees[1:G.n] .== 1) || return false
     all(d -> d > 0 && d != 2, degrees[(G.n+1):end]) || return false
-    k = decorated_excedances(G.permutation)
-    cell_dimension = dimensionOfPermutation(k, G.n, G.permutation)
+    cell_dimension=_target_cell_dimension(G.permutation)
     graph_dimension = length(G.edges) - (length(G.colors) - G.n)
     bridge_certificate = isempty(G.bridges) || length(G.bridges) == cell_dimension
     return bridge_certificate && cell_dimension == graph_dimension
@@ -882,7 +920,7 @@ function _decorated_trip_permutation(G::PlabicGraph)
         endpoints[i]==i || continue
         neighbor=only([v for (u,v) in G.edges if u==i] ∪
                       [u for (u,v) in G.edges if v==i])
-        permutation[i]=G.colors[neighbor]==:white ? -i : i
+        permutation[i]=_lollipop_decoration(G.colors[neighbor],i)
     end
     _validate_decorated_permutation(permutation)
     return permutation
@@ -892,6 +930,48 @@ function _with_recomputed_trip_permutation(G::PlabicGraph)
     permutation=_decorated_trip_permutation(G)
     return PlabicGraph(G.n,copy(G.colors),copy(G.edges),copy(G.positions),
                        permutation,copy(G.bridges))
+end
+
+"""Cyclically relabel the boundary of `G`, keeping the embedded drawing fixed."""
+function _cyclically_relabel_plabic_graph(G::PlabicGraph,shift::Integer)
+    n=G.n
+    n>0 || throw(ArgumentError("a plabic graph must have a nonempty boundary"))
+    offset=mod(Int(shift),n)
+    offset==0 && return PlabicGraph(n,copy(G.colors),copy(G.edges),copy(G.positions),
+                                    copy(G.permutation),copy(G.bridges))
+    relabel(vertex)=vertex<=n ? mod1(vertex+offset,n) : vertex
+    colors=copy(G.colors)
+    positions=copy(G.positions)
+    for old in 1:n
+        new=relabel(old)
+        colors[new]=G.colors[old]
+        positions[new]=G.positions[old]
+    end
+    edges=unique([(min(relabel(u),relabel(v)),max(relabel(u),relabel(v)))
+                  for (u,v) in G.edges])
+    sort!(edges)
+    bridges=[(relabel(a),relabel(b)) for (a,b) in G.bridges]
+    permutation=zeros(Int,n)
+    for old_source in 1:n
+        old_target=abs(G.permutation[old_source])
+        new_source=relabel(old_source)
+        new_target=relabel(old_target)
+        permutation[new_source]=old_target==old_source && G.permutation[old_source]<0 ?
+                                -new_target : new_target
+    end
+    return PlabicGraph(n,colors,edges,positions,permutation,bridges)
+end
+
+"""Interchange black and white at every colored internal vertex of `G`."""
+function _swap_plabic_colors(G::PlabicGraph)
+    colors=Symbol[color==:black ? :white : color==:white ? :black : color
+                  for color in G.colors]
+    permutation=_decorated_inverse(copy(G.permutation))
+    for i in 1:G.n
+        abs(G.permutation[i])==i && (permutation[i]=-permutation[i])
+    end
+    return PlabicGraph(G.n,colors,copy(G.edges),copy(G.positions),permutation,
+                       copy(G.bridges))
 end
 
 """
@@ -929,7 +1009,7 @@ graph_trips(G::PlabicGraph;kwargs...)=graph_trips(plabic_embedding(G;kwargs...))
 
 function _face_label_cardinality(permutation,side)
     left_count=count(eachindex(permutation)) do i
-        permutation[i] < 0 || (permutation[i] > 0 && permutation[i] < i)
+        _is_coloop(permutation,i) || (!_is_loop(permutation,i) && permutation[i]<i)
     end
     return side==:left ? left_count : length(permutation)-left_count
 end
@@ -1234,7 +1314,9 @@ function plabic_graph(input::AbstractVector{<:Integer})
     edges = Tuple{Int,Int}[]
     radial_depth = zeros(Int, n)
     for i in 1:n
-        push!(colors, base[i] == i ? :black : :white)
+        decoration=base[i]==i ? i : base[i]==i+n ? -i :
+            error("bridge recursion did not end at a decorated fixed point $i")
+        push!(colors,_lollipop_color(decoration,i))
         theta = -2pi * (i - 1) / max(n, 1) - pi / 2
         push!(positions, (0.82cos(theta), 0.82sin(theta)))
         push!(edges, (i, length(colors)))
@@ -1333,7 +1415,7 @@ function plabic_graph_from_drawing(n::Integer,
     for i in 1:n
         endpoints[i]==i || continue
         neighbor=only([v for (u,v) in edges if u==i] ∪ [u for (u,v) in edges if v==i])
-        permutation[i]=colors[neighbor]==:white ? -i : i
+        permutation[i]=_lollipop_decoration(colors[neighbor],i)
     end
     _validate_decorated_permutation(permutation)
     result=PlabicGraph(n,colors,edges,positions,permutation,Tuple{Int,Int}[])
@@ -1661,8 +1743,7 @@ end
 
 function _explicit_reduction_priority(G,depth,serial)
     graph_dimension=length(G.edges)-(length(G.colors)-G.n)
-    cell_dimension=dimensionOfPermutation(decorated_excedances(G.permutation),
-                                          G.n,G.permutation)
+    cell_dimension=_target_cell_dimension(G.permutation)
     bad,lens=_strand_reduction_metric(G)
     return (abs(graph_dimension-cell_dimension),bad,lens,depth,length(G.colors),serial)
 end
@@ -1757,8 +1838,7 @@ function _reduce_by_explicit_moves(G::PlabicGraph;animate=false,max_depth=18,max
         return replay,stages
     end
     graph_dimension=length(current.edges)-(length(current.colors)-current.n)
-    cell_dimension=dimensionOfPermutation(decorated_excedances(current.permutation),
-                                          current.n,current.permutation)
+    cell_dimension=_target_cell_dimension(current.permutation)
     throw(ArgumentError("explicit local reduction search did not reach a reduced graph " *
                         "(graph dimension $graph_dimension, cell dimension $cell_dimension); " *
                         "the graph was left unchanged rather than replaced by a canonical graph"))
@@ -2039,10 +2119,12 @@ end
 _edge_key(u::Int,v::Int)=u<v ? (u,v) : (v,u)
 
 function _perfect_orientation_matching(G::PlabicGraph,requested_sources=nothing)
-    default_sources=Int.(minGrassmannNecklace(G.permutation)[1])
+    source_permutation=_decorated_inverse(G.permutation)
+    default_sources=Int.(minGrassmannNecklace(source_permutation)[1])
     chosen=requested_sources===nothing ? default_sources : Int.(requested_sources)
-    length(chosen)==decorated_excedances(G.permutation) ||
-        throw(ArgumentError("source set must contain exactly $(decorated_excedances(G.permutation)) boundary vertices"))
+    rank=_target_rank(G.permutation)
+    length(chosen)==rank ||
+        throw(ArgumentError("source set must contain exactly $rank boundary vertices"))
     length(unique(chosen))==length(chosen) || throw(ArgumentError("source vertices must be distinct"))
     all(i->1<=i<=G.n,chosen) || throw(ArgumentError("source vertices must lie in 1:$(G.n)"))
     sources=Set(chosen)
@@ -2421,8 +2503,7 @@ end
 
 function _f_vector_payload(G::PlabicGraph;max_cells=250_000)
     counts=boundary_f_vector(G.permutation;max_cells=max_cells)
-    dimension=dimensionOfPermutation(decorated_excedances(G.permutation),
-                                     G.n,G.permutation)
+    dimension=_target_cell_dimension(G.permutation)
     return JSON.json(Dict("permutation"=>G.permutation,
                           "dimension"=>dimension,
                           "counts"=>counts,
@@ -2431,7 +2512,7 @@ end
 
 function _interactive_state_json(G;iterations=2500,restarts=12)
     E,labels,movable=_interactive_graph_state(G;iterations=iterations,restarts=restarts)
-    default_sources=Int.(minGrassmannNecklace(G.permutation)[1])
+    default_sources=Int.(minGrassmannNecklace(_decorated_inverse(G.permutation))[1])
     vertices=join((string("{\"id\":",i,",\"x\":",_json_number(x),
                           ",\"y\":",_json_number(y),",\"color\":\"",
                           E.graph.colors[i],"\"}")
@@ -2537,7 +2618,10 @@ html,body{overflow:hidden}.bar>b{white-space:nowrap}.bar>.controls{min-width:0;f
 const svg=document.getElementById('graph'),status=document.getElementById('status'),faceList=document.getElementById('face-list'),permInput=document.getElementById('permutation'),backButton=document.getElementById('back'),forwardButton=document.getElementById('forward'),allStrandsButton=document.getElementById('all-strands'),primalButton=document.getElementById('primal-toggle'),dualButton=document.getElementById('dual-toggle'),weightMode=document.getElementById('weight-mode'),sourceInput=document.getElementById('source-set'),assignAllVariablesButton=document.getElementById('assign-all-variables'),resultMode=document.getElementById('result-mode'),weightList=document.getElementById('weight-list'),measurementResult=document.getElementById('measurement-result'),copyJulia=document.getElementById('copy-julia'),copyM2=document.getElementById('copy-m2');
 const facetsToggleButton=document.getElementById('facets-toggle'),facetsPanel=document.getElementById('facets-panel'),facetsList=document.getElementById('facets-list'),facetsSummary=document.getElementById('facets-summary');
 const fVectorToggleButton=document.getElementById('f-vector-toggle'),fVectorPanel=document.getElementById('f-vector-panel'),fVectorOutput=document.getElementById('f-vector-output'),fVectorNote=document.getElementById('f-vector-note');
-const NS='http://www.w3.org/2000/svg',X=x=>400+300*x,Y=y=>400-300*y;
+const NS='http://www.w3.org/2000/svg';
+let viewRotationDegrees=0;
+function viewPoint(x,y){const angle=viewRotationDegrees*Math.PI/180,c=Math.cos(angle),s=Math.sin(angle),rx=c*x-s*y,ry=s*x+c*y;return {x:400+300*rx,y:400-300*ry}}
+function inverseViewPoint(px,py){const x=(px-400)/300,y=(400-py)/300,angle=-viewRotationDegrees*Math.PI/180,c=Math.cos(angle),s=Math.sin(angle);return {x:c*x-s*y,y:s*x+c*y}}
 const selectedStrands=new Set(),palette=['#e41a1c','#377eb8','#4daf4a','#984ea3','#ff7f00','#a65628','#f781bf','#17a2b8','#6a3d9a','#1b9e77'];
 let currentState=null,primalVisible=true,dualVisible=false,labelsVisible=true,weightSignature='',measurementData=null,facetsVisible=false,facetsLoaded=false,facetsLoading=false,facetsSignature='',facetsData=[],fVectorVisible=false,fVectorLoaded=false,fVectorLoading=false,fVectorSignature='',fVectorData=null;const faceWeights=new Map(),edgeWeights=new Map();
 const main=document.getElementById('main'),side=document.getElementById('side'),sideContent=document.getElementById('side-content'),sideSize=document.getElementById('side-size'),sideSizeValue=document.getElementById('side-size-value'),matrixSize=document.getElementById('matrix-size'),matrixSizeValue=document.getElementById('matrix-size-value'),resultHeight=document.getElementById('result-height'),resultHeightValue=document.getElementById('result-height-value'),measurementPanel=document.getElementById('measurement-panel');
@@ -2556,8 +2640,12 @@ parameterAssign.addEventListener('click',()=>saveParameter(false));document.getE
 const builderPanel=document.createElement('section');builderPanel.className='builder-panel';builderPanel.hidden=true;builderPanel.innerHTML='<h3>Graph drawing</h3><label>Boundary vertices <input id="builder-n" type="number" min="1" max="30" value="6"></label><div class="builder-grid"><button data-builder-tool="black">Black vertex</button><button data-builder-tool="white">White vertex</button><button data-builder-tool="edge">Add edges</button><button data-builder-tool="delete">Delete</button></div><div class="builder-actions"><button id="builder-undo">Undo</button><button id="builder-clear">Clear</button><button id="builder-cancel">Cancel</button><button id="builder-finish">Reduce & use graph</button></div><div class="side-note">Place internal vertices, then drag them whenever you want to adjust the drawing. In Add edges mode, click two endpoints. Delete removes a selected vertex or edge. Boundary vertices must each have one edge.</div><div id="builder-result" class="builder-permutation"></div>';
 sideContent.insertBefore(builderPanel,sideContent.firstChild);const builderN=document.getElementById('builder-n'),builderResult=document.getElementById('builder-result');
 const animationPanel=document.createElement('section');animationPanel.className='animation-panel';animationPanel.innerHTML='<h3>Animation</h3><label>Transformation speed <select id="animation-speed"><option value="0">Instant</option><option value="350">Fast</option><option value="900" selected>Slow</option><option value="1600">Very slow</option><option value="2800">Movie mode</option></select></label><div class="side-note">Square moves and hand-drawn graph reductions continuously morph through their individual operations.</div>';builderPanel.after(animationPanel);const animationSpeed=document.getElementById('animation-speed'),animationCaption=document.createElement('div');animationCaption.className='animation-caption';animationCaption.hidden=true;document.getElementById('canvas').append(animationCaption);let mutationPlaying=false;
-function renderAnimationLabels(labels){const layer=el('g',{class:'animation-labels'});for(const f of labels||[])layer.append(el('text',{x:X(f.x),y:Y(f.y),'font-size':f.font_size,class:'face-label'},labelText(f.label)));svg.append(layer)}
-function renderAnimationFrame(frame,labels=[]){svg.replaceChildren();svg.append(el('circle',{cx:400,cy:400,r:300,class:'disk'}));const layer=el('g',{class:'animation-frame'}),by=new Map(frame.vertices.map(v=>[v.id,v]));svg.append(layer);for(const [a,b] of frame.edges){const u=by.get(a),v=by.get(b);if(u&&v)layer.append(el('line',{x1:X(u.x),y1:Y(u.y),x2:X(v.x),y2:Y(v.y),class:'edge'}))}for(const v of frame.vertices){if(v.id<=frame.n)continue;layer.append(el('circle',{cx:X(v.x),cy:Y(v.y),r:8,fill:v.color==='black'?'black':'white',class:'internal'}))}for(let i=1;i<=frame.n;i++){const v=by.get(i);if(!v)continue;layer.append(el('circle',{cx:X(v.x),cy:Y(v.y),r:5,class:'boundary'}));layer.append(el('text',{x:X(1.12*v.x),y:Y(1.12*v.y),class:'boundary-label','text-anchor':'middle','dominant-baseline':'central'},String(i)))}renderAnimationLabels(labels)}
+const transformPanel=document.createElement('section');transformPanel.className='transform-panel';transformPanel.innerHTML='<h3>Graph transforms</h3><label>Rotate drawing <input id="view-rotation" type="range" min="-180" max="180" step="1" value="0"> <span id="view-rotation-value">0°</span></label><div class="builder-grid"><button id="reset-rotation">Reset rotation</button><button id="indices-minus">Indices −1</button><button id="indices-plus">Indices +1</button><button id="swap-colors">Swap black ↔ white</button></div><div class="side-note">Rotation changes only the view. Index ±1 cyclically relabels the boundary at fixed locations and updates the decorated permutation. Color swap interchanges every black and white internal vertex.</div>';animationPanel.after(transformPanel);
+const viewRotation=document.getElementById('view-rotation'),viewRotationValue=document.getElementById('view-rotation-value'),indicesMinusButton=document.getElementById('indices-minus'),indicesPlusButton=document.getElementById('indices-plus'),swapColorsButton=document.getElementById('swap-colors');
+indicesMinusButton.disabled=indicesPlusButton.disabled=swapColorsButton.disabled=true;
+function setViewRotation(value){viewRotationDegrees=Number(value)||0;viewRotation.value=String(viewRotationDegrees);viewRotationValue.textContent=viewRotationDegrees+'°';if(builder.active)renderBuilder();else if(currentState)render(currentState)}
+function renderAnimationLabels(labels){const layer=el('g',{class:'animation-labels'});for(const f of labels||[]){const p=viewPoint(f.x,f.y);layer.append(el('text',{x:p.x,y:p.y,'font-size':f.font_size,class:'face-label'},labelText(f.label)))}svg.append(layer)}
+function renderAnimationFrame(frame,labels=[]){svg.replaceChildren();svg.append(el('circle',{cx:400,cy:400,r:300,class:'disk'}));const layer=el('g',{class:'animation-frame'}),by=new Map(frame.vertices.map(v=>[v.id,v]));svg.append(layer);for(const [a,b] of frame.edges){const u=by.get(a),v=by.get(b);if(u&&v){const pu=viewPoint(u.x,u.y),pv=viewPoint(v.x,v.y);layer.append(el('line',{x1:pu.x,y1:pu.y,x2:pv.x,y2:pv.y,class:'edge'}))}}for(const v of frame.vertices){if(v.id<=frame.n)continue;const p=viewPoint(v.x,v.y);layer.append(el('circle',{cx:p.x,cy:p.y,r:8,fill:v.color==='black'?'black':'white',class:'internal'}))}for(let i=1;i<=frame.n;i++){const v=by.get(i);if(!v)continue;const p=viewPoint(v.x,v.y),label=viewPoint(1.12*v.x,1.12*v.y);layer.append(el('circle',{cx:p.x,cy:p.y,r:5,class:'boundary'}));layer.append(el('text',{x:label.x,y:label.y,class:'boundary-label','text-anchor':'middle','dominant-baseline':'central'},String(i)))}renderAnimationLabels(labels)}
 function stateAnimationFrame(state,caption=''){return {caption,n:state.n,vertices:state.vertices.map(v=>({id:v.id,x:v.x,y:v.y,color:v.color})),edges:state.edges.map(e=>[e[0],e[1]])}}
 function nearestVertex(vertex,candidates){let best=candidates[0],score=Infinity;for(const candidate of candidates){const dx=vertex.x-candidate.x,dy=vertex.y-candidate.y,colorPenalty=vertex.color===candidate.color?0:.025,value=dx*dx+dy*dy+colorPenalty;if(value<score){score=value;best=candidate}}return best}
 function morphCorrespondence(from,to){
@@ -2576,14 +2664,14 @@ function drawMorph(from,to,t,labels=[]){
  for(const v of from.vertices){const q=maps.forward.get(v.id)||v;movedOld.set(v.id,point(v,q,ease));if(q.id<=to.vertices.length)claimedTargets.add(q.id)}
  for(const q of to.vertices){const p=maps.reverse.get(q.id)||q;movedNew.set(q.id,point(p,q,ease))}
  const sourceEdges=new Map(from.edges.map(([a,b],index)=>[edgeKey(a,b),index])),targetEdges=new Map(to.edges.map(([a,b],index)=>[edgeKey(a,b),index])),usedSources=new Set(),usedTargets=new Set(),neededTargetNodes=new Set();
- const drawEdge=(u,v)=>edgesLayer.append(el('line',{x1:X(u.x),y1:Y(u.y),x2:X(v.x),y2:Y(v.y),class:'edge'}));
+ const drawEdge=(u,v)=>{const a=viewPoint(u.x,u.y),b=viewPoint(v.x,v.y);edgesLayer.append(el('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:'edge'}))};
  for(const [sourceIndex,[a,b]] of from.edges.entries()){const targetA=maps.forward.get(a)||fromBy.get(a),targetB=maps.forward.get(b)||fromBy.get(b);if(targetA.id===targetB.id)continue;const targetIndex=targetEdges.get(edgeKey(targetA.id,targetB.id));if(targetIndex===undefined||usedTargets.has(targetIndex))continue;drawEdge(movedOld.get(a),movedOld.get(b));usedSources.add(sourceIndex);usedTargets.add(targetIndex)}
  for(const [targetIndex,[a,b]] of to.edges.entries()){if(usedTargets.has(targetIndex))continue;const sourceA=maps.reverse.get(a)||toBy.get(a),sourceB=maps.reverse.get(b)||toBy.get(b),sourceIndex=sourceEdges.get(edgeKey(sourceA.id,sourceB.id));if(sourceIndex===undefined||usedSources.has(sourceIndex))continue;drawEdge(movedNew.get(a),movedNew.get(b));neededTargetNodes.add(a);neededTargetNodes.add(b);usedSources.add(sourceIndex);usedTargets.add(targetIndex)}
  for(const [sourceIndex,[a,b]] of from.edges.entries()){if(usedSources.has(sourceIndex))continue;drawEdge(movedOld.get(a),movedOld.get(b))}
  for(const [targetIndex,[a,b]] of to.edges.entries()){if(usedTargets.has(targetIndex))continue;drawEdge(movedNew.get(a),movedNew.get(b));neededTargetNodes.add(a);neededTargetNodes.add(b)}
- for(const v of from.vertices){if(v.id<=from.n)continue;const q=maps.forward.get(v.id)||v,p=movedOld.get(v.id),color=ease<.5?v.color:q.color;nodes.append(el('circle',{cx:X(p.x),cy:Y(p.y),r:8,fill:color==='black'?'black':'white',class:'internal'}))}
- for(const q of to.vertices){if(q.id<=to.n||claimedTargets.has(q.id)&&!neededTargetNodes.has(q.id))continue;const v=movedNew.get(q.id);nodes.append(el('circle',{cx:X(v.x),cy:Y(v.y),r:8,fill:q.color==='black'?'black':'white',class:'internal'}))}
- for(let i=1;i<=to.n;i++){const q=movedNew.get(i)||toBy.get(i);nodes.append(el('circle',{cx:X(q.x),cy:Y(q.y),r:5,class:'boundary'}));nodes.append(el('text',{x:X(1.12*q.x),y:Y(1.12*q.y),class:'boundary-label','text-anchor':'middle','dominant-baseline':'central'},String(i)))}renderAnimationLabels(labels)
+ for(const v of from.vertices){if(v.id<=from.n)continue;const q=maps.forward.get(v.id)||v,p=movedOld.get(v.id),screen=viewPoint(p.x,p.y),color=ease<.5?v.color:q.color;nodes.append(el('circle',{cx:screen.x,cy:screen.y,r:8,fill:color==='black'?'black':'white',class:'internal'}))}
+ for(const q of to.vertices){if(q.id<=to.n||claimedTargets.has(q.id)&&!neededTargetNodes.has(q.id))continue;const v=movedNew.get(q.id),screen=viewPoint(v.x,v.y);nodes.append(el('circle',{cx:screen.x,cy:screen.y,r:8,fill:q.color==='black'?'black':'white',class:'internal'}))}
+ for(let i=1;i<=to.n;i++){const q=movedNew.get(i)||toBy.get(i),screen=viewPoint(q.x,q.y),label=viewPoint(1.12*q.x,1.12*q.y);nodes.append(el('circle',{cx:screen.x,cy:screen.y,r:5,class:'boundary'}));nodes.append(el('text',{x:label.x,y:label.y,class:'boundary-label','text-anchor':'middle','dominant-baseline':'central'},String(i)))}renderAnimationLabels(labels)
 }
 function tweenFrames(from,to,duration,labels=[]){if(duration<=0){renderAnimationFrame(to,labels);return Promise.resolve()}return new Promise(resolve=>{let started=null;function tick(timestamp){if(started===null)started=timestamp;const t=Math.min(1,(timestamp-started)/duration);drawMorph(from,to,t,labels);if(t<1)requestAnimationFrame(tick);else{renderAnimationFrame(to,labels);resolve()}}requestAnimationFrame(tick)})}
 async function playMutation(payload,options={}){const duration=Number(animationSpeed.value),persistentLabels=options.labels===undefined?(labelsVisible?(currentState.faces||[]).map(f=>({label:[...f.label],x:f.x,y:f.y,font_size:f.font_size})):[]):options.labels,transform=options.transform||((frame)=>frame);mutationPlaying=true;animationCaption.hidden=false;try{let from=options.startFrame||stateAnimationFrame(currentState);for(const rawFrame of payload.frames||[]){const frame=transform(rawFrame);animationCaption.textContent=frame.caption;status.textContent=frame.caption;await tweenFrames(from,frame,duration,persistentLabels);from=frame}const finalFrame=stateAnimationFrame(payload.state,options.finalCaption||'Recompute layout and face labels');animationCaption.textContent=finalFrame.caption;status.textContent=finalFrame.caption;await tweenFrames(from,finalFrame,duration,persistentLabels);render(payload.state);status.textContent=options.completeMessage||'Square move complete.'}finally{mutationPlaying=false;animationCaption.hidden=true}}
@@ -2597,21 +2685,21 @@ function boundaryBuilderPosition(i){const theta=-Math.PI/2-2*Math.PI*(i-1)/build
 function builderVertex(id){if(id<=builder.n)return boundaryBuilderPosition(id);const v=builder.vertices[id-builder.n-1];return v&&{id,x:v.x,y:v.y,color:v.color}}
 function builderAnimationFrame(){const vertices=[];for(let i=1;i<=builder.n;i++)vertices.push({...boundaryBuilderPosition(i),color:'boundary'});builder.vertices.forEach((v,j)=>vertices.push({id:builder.n+j+1,x:v.x,y:v.y,color:v.color}));return {caption:'Edited graph',n:builder.n,vertices,edges:builder.edges.map(e=>[e[0],e[1]])}}
 function selectBuilderVertex(id,event){event.stopPropagation();if(performance.now()<builder.suppressClickUntil)return;if(builder.tool==='delete'){if(id<=builder.n){status.textContent='Boundary vertices cannot be deleted.';return}saveBuilder();builder.vertices.splice(id-builder.n-1,1);builder.edges=builder.edges.filter(e=>!e.includes(id)).map(e=>e.map(v=>v>id?v-1:v));builder.selected=null;renderBuilder();return}if(builder.tool!=='edge')return;if(builder.selected===null){builder.selected=id;renderBuilder();return}if(builder.selected===id){builder.selected=null;renderBuilder();return}const edge=[Math.min(builder.selected,id),Math.max(builder.selected,id)];if(!builder.edges.some(e=>e[0]===edge[0]&&e[1]===edge[1])){saveBuilder();builder.edges.push(edge)}builder.selected=null;renderBuilder()}
-function renderBuilder(){svg.replaceChildren();svg.append(el('circle',{cx:400,cy:400,r:300,class:'disk'}));const layer=el('g');svg.append(layer);for(const [j,e] of builder.edges.entries()){const u=builderVertex(e[0]),v=builderVertex(e[1]);if(!u||!v)continue;const line=el('line',{x1:X(u.x),y1:Y(u.y),x2:X(v.x),y2:Y(v.y),class:'builder-edge'});line.addEventListener('click',event=>{if(performance.now()<builder.suppressClickUntil||builder.tool!=='delete')return;event.stopPropagation();saveBuilder();builder.edges.splice(j,1);renderBuilder()});layer.append(line)}for(let i=1;i<=builder.n;i++){const v=boundaryBuilderPosition(i),dot=el('circle',{cx:X(v.x),cy:Y(v.y),r:6,class:'builder-boundary'+(builder.selected===i?' builder-selected':'')});dot.addEventListener('click',e=>selectBuilderVertex(i,e));layer.append(dot);layer.append(el('text',{x:X(1.12*v.x),y:Y(1.12*v.y),'text-anchor':'middle','dominant-baseline':'central',class:'builder-number'},String(i)))}builder.vertices.forEach((v,j)=>{const id=builder.n+j+1,dot=el('circle',{cx:X(v.x),cy:Y(v.y),r:10,fill:v.color==='black'?'black':'white',stroke:'#26343a',class:'builder-vertex'+(builder.selected===id?' builder-selected':'')});dot.addEventListener('pointerdown',e=>beginBuilderDrag(id,e));dot.addEventListener('click',e=>selectBuilderVertex(id,e));layer.append(dot)});if(builder.vertices.length===0)layer.append(el('text',{x:400,y:400,class:'builder-hint'},'Click inside the disk to place a '+builder.tool+' vertex'));status.textContent='Manual drawing mode · '+builder.vertices.length+' internal vertices · '+builder.edges.length+' edges · drag a vertex to reposition it'}
+function renderBuilder(){svg.replaceChildren();svg.append(el('circle',{cx:400,cy:400,r:300,class:'disk'}));const layer=el('g');svg.append(layer);for(const [j,e] of builder.edges.entries()){const u=builderVertex(e[0]),v=builderVertex(e[1]);if(!u||!v)continue;const pu=viewPoint(u.x,u.y),pv=viewPoint(v.x,v.y),line=el('line',{x1:pu.x,y1:pu.y,x2:pv.x,y2:pv.y,class:'builder-edge'});line.addEventListener('click',event=>{if(performance.now()<builder.suppressClickUntil||builder.tool!=='delete')return;event.stopPropagation();saveBuilder();builder.edges.splice(j,1);renderBuilder()});layer.append(line)}for(let i=1;i<=builder.n;i++){const v=boundaryBuilderPosition(i),p=viewPoint(v.x,v.y),label=viewPoint(1.12*v.x,1.12*v.y),dot=el('circle',{cx:p.x,cy:p.y,r:6,class:'builder-boundary'+(builder.selected===i?' builder-selected':'')});dot.addEventListener('click',e=>selectBuilderVertex(i,e));layer.append(dot);layer.append(el('text',{x:label.x,y:label.y,'text-anchor':'middle','dominant-baseline':'central',class:'builder-number'},String(i)))}builder.vertices.forEach((v,j)=>{const id=builder.n+j+1,p=viewPoint(v.x,v.y),dot=el('circle',{cx:p.x,cy:p.y,r:10,fill:v.color==='black'?'black':'white',stroke:'#26343a',class:'builder-vertex'+(builder.selected===id?' builder-selected':'')});dot.addEventListener('pointerdown',e=>beginBuilderDrag(id,e));dot.addEventListener('click',e=>selectBuilderVertex(id,e));layer.append(dot)});if(builder.vertices.length===0)layer.append(el('text',{x:400,y:400,class:'builder-hint'},'Click inside the disk to place a '+builder.tool+' vertex'));status.textContent='Manual drawing mode · '+builder.vertices.length+' internal vertices · '+builder.edges.length+' edges · drag a vertex to reposition it'}
 function beginBuilderDrag(id,event){if(event.button!==0)return;const [px,py]=builderPoint(event);builder.drag={id,pointerId:event.pointerId,startX:px,startY:py,moved:false,snapshot:builderSnapshot()}}
-svg.addEventListener('pointermove',event=>{const drag=builder.drag;if(!builder.active||!drag||event.pointerId!==drag.pointerId)return;const [px,py]=builderPoint(event);if(!drag.moved&&Math.hypot(px-drag.startX,py-drag.startY)<4)return;if(!drag.moved){drag.moved=true;svg.setPointerCapture(event.pointerId);builder.history.push(drag.snapshot);if(builder.history.length>100)builder.history.shift()}const v=builder.vertices[drag.id-builder.n-1];if(!v)return;let x=(px-400)/300,y=(400-py)/300;const radius=Math.hypot(x,y),limit=.94;if(radius>limit){x*=limit/radius;y*=limit/radius}v.x=x;v.y=y;renderBuilder()});
+svg.addEventListener('pointermove',event=>{const drag=builder.drag;if(!builder.active||!drag||event.pointerId!==drag.pointerId)return;const [px,py]=builderPoint(event);if(!drag.moved&&Math.hypot(px-drag.startX,py-drag.startY)<4)return;if(!drag.moved){drag.moved=true;svg.setPointerCapture(event.pointerId);builder.history.push(drag.snapshot);if(builder.history.length>100)builder.history.shift()}const v=builder.vertices[drag.id-builder.n-1];if(!v)return;let {x,y}=inverseViewPoint(px,py);const radius=Math.hypot(x,y),limit=.94;if(radius>limit){x*=limit/radius;y*=limit/radius}v.x=x;v.y=y;renderBuilder()});
 function endBuilderDrag(event){if(!builder.drag)return;if(builder.drag.moved)builder.suppressClickUntil=performance.now()+150;builder.drag=null;if(svg.hasPointerCapture(event.pointerId))svg.releasePointerCapture(event.pointerId)}
 svg.addEventListener('pointerup',endBuilderDrag);svg.addEventListener('pointercancel',endBuilderDrag);
 function startBuilder(){const n=Number(builderN.value);if(!Number.isInteger(n)||n<1||n>30){status.textContent='Choose between 1 and 30 boundary vertices.';return}builder.active=true;builder.n=n;builder.vertices=[];builder.edges=[];builder.selected=null;builder.history=[];builderResult.textContent='';builderPanel.hidden=false;setBuilderTool('black')}
 function editCurrentGraph(){if(!currentState||currentState.blank||mutationPlaying)return;builder.active=true;builder.n=currentState.n;builderN.value=String(builder.n);builder.vertices=currentState.vertices.filter(v=>v.id>builder.n).sort((a,b)=>a.id-b.id).map(v=>({x:v.x,y:v.y,color:v.color}));builder.edges=currentState.edges.map(e=>[e[0],e[1]]);builder.selected=null;builder.history=[];builder.drag=null;builderResult.textContent='Editing permutation: ['+currentState.permutation.join(', ')+']';builderPanel.hidden=false;selectedStrands.clear();setBuilderTool('black')}
 function leaveBuilder(){builder.active=false;builderPanel.hidden=true;if(currentState)render(currentState);else load()}
 async function finishBuilder(){if(!builder.active||mutationPlaying)return;status.textContent='Preparing the reduction movie and decorated trip permutation…';try{const startFrame=builderAnimationFrame(),backendVertices=builder.vertices.map(v=>({x:v.x,y:v.y,color:v.color}));const r=await fetch('/custom-graph',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({n:builder.n,vertices:backendVertices,edges:builder.edges})});if(!r.ok)throw Error(await r.text());const payload=await r.json(),state=payload.state;builderResult.textContent='Permutation: ['+state.permutation.join(', ')+']';builder.active=false;builderPanel.hidden=true;selectedStrands.clear();await playMutation(payload,{startFrame,labels:[],finalCaption:'Arrange the reduced representative and compute its face labels',completeMessage:'Reduction complete. Decorated trip permutation: ['+state.permutation.join(', ')+'].'})}catch(e){status.textContent=e.message}}
-svg.addEventListener('click',event=>{if(performance.now()<builder.suppressClickUntil||!builder.active||!['black','white'].includes(builder.tool)||event.target!==svg&&event.target.getAttribute('class')!=='disk')return;const [px,py]=builderPoint(event),x=(px-400)/300,y=(400-py)/300;if(x*x+y*y>=.94*.94)return;saveBuilder();builder.vertices.push({x,y,color:builder.tool});renderBuilder()});
+svg.addEventListener('click',event=>{if(performance.now()<builder.suppressClickUntil||!builder.active||!['black','white'].includes(builder.tool)||event.target!==svg&&event.target.getAttribute('class')!=='disk')return;const [px,py]=builderPoint(event),{x,y}=inverseViewPoint(px,py);if(x*x+y*y>=.94*.94)return;saveBuilder();builder.vertices.push({x,y,color:builder.tool});renderBuilder()});
 manualButton.addEventListener('click',startBuilder);editGraphButton.addEventListener('click',editCurrentGraph);builderN.addEventListener('input',()=>{if(builder.active)startBuilder()});for(const b of builderPanel.querySelectorAll('[data-builder-tool]'))b.addEventListener('click',()=>setBuilderTool(b.dataset.builderTool));document.getElementById('builder-undo').addEventListener('click',()=>{if(!builder.history.length)return;const old=JSON.parse(builder.history.pop());builder.vertices=old.vertices;builder.edges=old.edges;builder.selected=null;renderBuilder()});document.getElementById('builder-clear').addEventListener('click',()=>{saveBuilder();builder.vertices=[];builder.edges=[];builder.selected=null;renderBuilder()});document.getElementById('builder-cancel').addEventListener('click',leaveBuilder);document.getElementById('builder-finish').addEventListener('click',finishBuilder);
 async function load(){const r=await fetch('/state');if(!r.ok)throw Error(await r.text());render(await r.json())}
 function labelText(label){return '{'+label.join(',')+'}'}
 function defaultVariable(i){return i<=26?String.fromCharCode(96+i):'x_'+i}
-function graphSignature(s){return JSON.stringify([s.permutation,s.edges,s.faces.map(f=>f.label)])}
+function graphSignature(s){return JSON.stringify([s.permutation,s.edges,s.vertices.map(v=>v.color),s.faces.map(f=>f.label)])}
 function permutationSignature(s){return s&& !s.blank?JSON.stringify(s.permutation):''}
 function resetFacets(){facetsVisible=false;facetsLoaded=false;facetsLoading=false;facetsSignature='';facetsData=[];facetsPanel.hidden=true;facetsList.replaceChildren();facetsSummary.textContent='';facetsToggleButton.textContent='Show facets'}
 function facetGraphSvg(facet){const facetSvg=el('svg',{viewBox:'0 0 320 220',class:'facet-graph',role:'img','aria-label':'Plabic graph for facet permutation ['+facet.permutation.join(', ')+']'});facetSvg.append(el('title',{},'Plabic graph for facet ['+facet.permutation.join(', ')+']'));facetSvg.append(el('circle',{cx:160,cy:110,r:88,class:'facet-disk'}));const by=new Map(facet.vertices.map(vertex=>[vertex.id,vertex])),cx=x=>160+88*x,cy=y=>110-88*y;for(const [a,b] of facet.edges){const u=by.get(a),v=by.get(b);facetSvg.append(el('line',{x1:cx(u.x),y1:cy(u.y),x2:cx(v.x),y2:cy(v.y),class:'facet-edge'}))}for(const vertex of facet.vertices){if(vertex.id<=facet.n)continue;facetSvg.append(el('circle',{cx:cx(vertex.x),cy:cy(vertex.y),r:5.5,fill:vertex.color==='black'?'black':'white',class:'facet-internal'}))}for(let i=1;i<=facet.n;i++){const vertex=by.get(i);facetSvg.append(el('circle',{cx:cx(vertex.x),cy:cy(vertex.y),r:3.5,class:'facet-boundary'}));facetSvg.append(el('text',{x:cx(1.16*vertex.x),y:cy(1.16*vertex.y),class:'facet-boundary-label'},String(i)))}return facetSvg}
@@ -2627,30 +2715,33 @@ function assignAllEdgeVariables(){if(!currentState||currentState.blank)return;ed
 function assignAllVariables(){weightMode.value==='face'?assignAllFaceVariables():assignAllEdgeVariables()}
 function renderMeasurementResult(){if(!measurementData){measurementResult.textContent='Assign variables, then press Compute.';copyJulia.disabled=copyM2.disabled=true;return}const pl=resultMode.value==='pluckers';measurementResult.innerHTML='\\['+(pl?measurementData.plucker_latex:measurementData.matrix_latex)+'\\]';copyJulia.disabled=copyM2.disabled=false;if(window.MathJax?.typesetPromise)MathJax.typesetPromise([measurementResult])}
 async function computeMeasurement(){if(!currentState||currentState.blank)return;collectWeights();const sources=sourceInput.value.split(/[ ,]+/).filter(Boolean).map(Number);if(sources.length!==currentState.k||sources.some(x=>!Number.isInteger(x))){status.textContent='Enter exactly '+currentState.k+' distinct integer sources.';return}status.textContent='Computing boundary measurement…';const map=weightMode.value==='face'?faceWeights:edgeWeights;try{const r=await fetch('/measurement',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:weightMode.value,sources,weights:Object.fromEntries(map)})});if(!r.ok)throw Error(await r.text());measurementData=await r.json();renderMeasurementResult();status.textContent='Boundary measurement computed from sources '+measurementData.sources.join(', ')+'.'}catch(e){status.textContent=e.message}}
-function renderDual(s,layer){const by=new Map(s.faces.map(f=>[f.id,f]));for(const ids of (s.dual_black_faces||[])){const faces=ids.map(id=>by.get(id)).filter(Boolean);if(faces.length>=3)layer.append(el('polygon',{points:faces.map(f=>X(f.dual_x)+','+Y(f.dual_y)).join(' '),class:'dual-black-face'}))}for(const [a,b] of s.dual_edges){const u=by.get(a),v=by.get(b);layer.append(el('line',{x1:X(u.dual_x),y1:Y(u.dual_y),x2:X(v.dual_x),y2:Y(v.dual_y),class:'dual-edge'}))}}
+function renderDual(s,layer){const by=new Map(s.faces.map(f=>[f.id,f]));for(const ids of (s.dual_black_faces||[])){const faces=ids.map(id=>by.get(id)).filter(Boolean);if(faces.length>=3)layer.append(el('polygon',{points:faces.map(f=>{const p=viewPoint(f.dual_x,f.dual_y);return p.x+','+p.y}).join(' '),class:'dual-black-face'}))}for(const [a,b] of s.dual_edges){const u=by.get(a),v=by.get(b),pu=viewPoint(u.dual_x,u.dual_y),pv=viewPoint(v.dual_x,v.dual_y);layer.append(el('line',{x1:pu.x,y1:pu.y,x2:pv.x,y2:pv.y,class:'dual-edge'}))}}
 function render(s){builder.active=false;builderPanel.hidden=true;currentState=s;if(facetsLoaded&&facetsSignature!==permutationSignature(s))resetFacets();if(fVectorLoaded&&fVectorSignature!==permutationSignature(s))resetFVector();permInput.value=s.blank?'':'['+s.permutation.join(', ')+']';svg.replaceChildren();svg.append(el('circle',{cx:400,cy:400,r:300,class:'disk'}));const primal=el('g',{display:primalVisible?'inline':'none'}),dual=el('g',{display:dualVisible?'inline':'none'}),labels=el('g',{display:(primalVisible||dualVisible)?'inline':'none'});svg.append(primal);svg.append(dual);svg.append(labels);
- for(const f of s.faces){if(!f.movable)continue;primal.append(el('polygon',{points:f.polygon.map(p=>X(p[0])+','+Y(p[1])).join(' '),class:'square-face'}))}
- for(const f of s.faces){const hit=el('polygon',{points:f.polygon.map(p=>X(p[0])+','+Y(p[1])).join(' '),class:'face-hit'});hit.addEventListener('contextmenu',e=>openParameterMenu('face',f.id,e));if(f.movable)hit.addEventListener('dblclick',()=>move(f.label));primal.append(hit)}
- const by=new Map(s.vertices.map(v=>[v.id,v]));for(const [j,[a,b]] of s.edges.entries()){const u=by.get(a),v=by.get(b),line=el('line',{x1:X(u.x),y1:Y(u.y),x2:X(v.x),y2:Y(v.y),class:'edge'});line.addEventListener('contextmenu',e=>openParameterMenu('edge',j+1,e));primal.append(line);const hit=el('line',{x1:X(u.x),y1:Y(u.y),x2:X(v.x),y2:Y(v.y),class:'edge-hit'});hit.addEventListener('contextmenu',e=>openParameterMenu('edge',j+1,e));primal.append(hit)}
- const defs=el('defs');primal.append(defs);for(const strand of s.strands){if(!selectedStrands.has(strand.source))continue;const color=palette[(strand.source-1)%palette.length],marker=el('marker',{id:'arrow-'+strand.source,viewBox:'0 0 10 10',refX:8,refY:5,markerWidth:6,markerHeight:6,orient:'auto-start-reverse'});marker.append(el('path',{d:'M 0 0 L 10 5 L 0 10 z',fill:color}));defs.append(marker);const d=strand.points.map((p,j)=>(j?'L':'M')+X(p[0])+' '+Y(p[1])).join(' ');primal.append(el('path',{d,class:'strand',stroke:color,'marker-end':'url(#arrow-'+strand.source+')'}))}
- for(const v of s.vertices){if(v.id<=s.n)continue;primal.append(el('circle',{cx:X(v.x),cy:Y(v.y),r:8,fill:v.color==='black'?'black':'white',class:'internal'}))}
- for(let i=1;i<=s.n;i++){const v=by.get(i),toggle=()=>{selectedStrands.has(i)?selectedStrands.delete(i):selectedStrands.add(i);render(s)};const dot=el('circle',{cx:X(v.x),cy:Y(v.y),r:5,class:'boundary'});dot.addEventListener('dblclick',toggle);dot.append(el('title',{},'Double-click to toggle strand '+i));primal.append(dot);const number=el('text',{x:X(1.12*v.x),y:Y(1.12*v.y),class:'boundary-label','text-anchor':'middle','dominant-baseline':'central'},String(i));number.addEventListener('dblclick',toggle);primal.append(number)}
+ for(const f of s.faces){if(!f.movable)continue;primal.append(el('polygon',{points:f.polygon.map(point=>{const p=viewPoint(point[0],point[1]);return p.x+','+p.y}).join(' '),class:'square-face'}))}
+ for(const f of s.faces){const hit=el('polygon',{points:f.polygon.map(point=>{const p=viewPoint(point[0],point[1]);return p.x+','+p.y}).join(' '),class:'face-hit'});hit.addEventListener('contextmenu',e=>openParameterMenu('face',f.id,e));if(f.movable)hit.addEventListener('dblclick',()=>move(f.label));primal.append(hit)}
+ const by=new Map(s.vertices.map(v=>[v.id,v]));for(const [j,[a,b]] of s.edges.entries()){const u=by.get(a),v=by.get(b),pu=viewPoint(u.x,u.y),pv=viewPoint(v.x,v.y),line=el('line',{x1:pu.x,y1:pu.y,x2:pv.x,y2:pv.y,class:'edge'});line.addEventListener('contextmenu',e=>openParameterMenu('edge',j+1,e));primal.append(line);const hit=el('line',{x1:pu.x,y1:pu.y,x2:pv.x,y2:pv.y,class:'edge-hit'});hit.addEventListener('contextmenu',e=>openParameterMenu('edge',j+1,e));primal.append(hit)}
+ const defs=el('defs');primal.append(defs);for(const strand of s.strands){if(!selectedStrands.has(strand.source))continue;const color=palette[(strand.source-1)%palette.length],marker=el('marker',{id:'arrow-'+strand.source,viewBox:'0 0 10 10',refX:8,refY:5,markerWidth:6,markerHeight:6,orient:'auto-start-reverse'});marker.append(el('path',{d:'M 0 0 L 10 5 L 0 10 z',fill:color}));defs.append(marker);const d=strand.points.map((point,j)=>{const p=viewPoint(point[0],point[1]);return (j?'L':'M')+p.x+' '+p.y}).join(' ');primal.append(el('path',{d,class:'strand',stroke:color,'marker-end':'url(#arrow-'+strand.source+')'}))}
+ for(const v of s.vertices){if(v.id<=s.n)continue;const p=viewPoint(v.x,v.y);primal.append(el('circle',{cx:p.x,cy:p.y,r:8,fill:v.color==='black'?'black':'white',class:'internal'}))}
+ for(let i=1;i<=s.n;i++){const v=by.get(i),p=viewPoint(v.x,v.y),label=viewPoint(1.12*v.x,1.12*v.y),toggle=()=>{selectedStrands.has(i)?selectedStrands.delete(i):selectedStrands.add(i);render(s)};const dot=el('circle',{cx:p.x,cy:p.y,r:5,class:'boundary'});dot.addEventListener('dblclick',toggle);dot.append(el('title',{},'Double-click to toggle strand '+i));primal.append(dot);const number=el('text',{x:label.x,y:label.y,class:'boundary-label','text-anchor':'middle','dominant-baseline':'central'},String(i));number.addEventListener('dblclick',toggle);primal.append(number)}
  renderDual(s,dual);
- if(labelsVisible)for(const f of s.faces){const labelX=dualVisible?f.dual_x:f.x,labelY=dualVisible?f.dual_y:f.y,t=el('text',{x:X(labelX),y:Y(labelY),'font-size':f.font_size,class:'face-label'+(f.movable?' movable':'')},labelText(f.label));t.addEventListener('contextmenu',e=>openParameterMenu('face',f.id,e));if(f.movable){t.setAttribute('title','Double-click to apply square move');t.addEventListener('dblclick',()=>move(f.label))}labels.append(t)}
- if(weightMode.value==='face')for(const f of s.faces){const value=faceWeights.get(f.id);if(value)labels.append(el('text',{x:X(f.x),y:Y(f.y)+(labelsVisible?16:0),class:'parameter-label'},value))}
- if(weightMode.value==='edge')s.edges.forEach(([a,b],j)=>{const value=edgeWeights.get(j+1);if(!value)return;const u=by.get(a),v=by.get(b),dx=X(v.x)-X(u.x),dy=Y(v.y)-Y(u.y),length=Math.hypot(dx,dy)||1,offset=12;labels.append(el('text',{x:(X(u.x)+X(v.x))/2-offset*dy/length,y:(Y(u.y)+Y(v.y))/2+offset*dx/length,class:'parameter-label'},value))});
+ if(labelsVisible)for(const f of s.faces){const labelX=dualVisible?f.dual_x:f.x,labelY=dualVisible?f.dual_y:f.y,p=viewPoint(labelX,labelY),t=el('text',{x:p.x,y:p.y,'font-size':f.font_size,class:'face-label'+(f.movable?' movable':'')},labelText(f.label));t.addEventListener('contextmenu',e=>openParameterMenu('face',f.id,e));if(f.movable){t.setAttribute('title','Double-click to apply square move');t.addEventListener('dblclick',()=>move(f.label))}labels.append(t)}
+ if(weightMode.value==='face')for(const f of s.faces){const value=faceWeights.get(f.id);if(value){const p=viewPoint(f.x,f.y);labels.append(el('text',{x:p.x,y:p.y+(labelsVisible?16:0),class:'parameter-label'},value))}}
+ if(weightMode.value==='edge')s.edges.forEach(([a,b],j)=>{const value=edgeWeights.get(j+1);if(!value)return;const u=by.get(a),v=by.get(b),pu=viewPoint(u.x,u.y),pv=viewPoint(v.x,v.y),dx=pv.x-pu.x,dy=pv.y-pu.y,length=Math.hypot(dx,dy)||1,offset=12;labels.append(el('text',{x:(pu.x+pv.x)/2-offset*dy/length,y:(pu.y+pv.y)/2+offset*dx/length,class:'parameter-label'},value))});
  faceList.replaceChildren();for(const f of s.faces){const item=document.createElement('div');item.className='face-item'+(f.movable?' square-item':'');item.textContent=labelText(f.label);item.title=f.movable?'Square face':'';faceList.append(item)}
  renderWeightEditor(s);
  primalButton.textContent=primalVisible?'Hide plabic graph':'Show plabic graph';dualButton.textContent=dualVisible?'Hide dual graph':'Show dual graph';
- backButton.disabled=!s.can_undo;forwardButton.disabled=!s.can_redo;editGraphButton.disabled=!!s.blank||s.n===0;allStrandsButton.disabled=s.n===0;facetsToggleButton.disabled=!!s.blank||facetsLoading;fVectorToggleButton.disabled=!!s.blank||fVectorLoading;assignAllVariablesButton.disabled=!!s.blank||(weightMode.value==='face'?s.faces.length===0:s.edges.length===0);allStrandsButton.textContent=s.n>0&&selectedStrands.size===s.n?'Undraw all strands':'Draw all strands';
+ backButton.disabled=!s.can_undo;forwardButton.disabled=!s.can_redo;editGraphButton.disabled=!!s.blank||s.n===0;indicesMinusButton.disabled=indicesPlusButton.disabled=swapColorsButton.disabled=!!s.blank||s.n===0;allStrandsButton.disabled=s.n===0;facetsToggleButton.disabled=!!s.blank||facetsLoading;fVectorToggleButton.disabled=!!s.blank||fVectorLoading;assignAllVariablesButton.disabled=!!s.blank||(weightMode.value==='face'?s.faces.length===0:s.edges.length===0);allStrandsButton.textContent=s.n>0&&selectedStrands.size===s.n?'Undraw all strands':'Draw all strands';
  status.textContent=s.blank?'Enter a decorated permutation and draw its graph.':'';}
 async function move(label){if(mutationPlaying)return;status.textContent='Preparing square-move animation…';try{const r=await fetch('/move/'+label.join(','),{method:'POST'});if(!r.ok)throw Error(await r.text());await playMutation(await r.json())}catch(e){mutationPlaying=false;animationCaption.hidden=true;status.textContent=e.message}}
 async function drawPermutation(){if(mutationPlaying)return;status.textContent='Replacing graph…';try{const r=await fetch('/permutation',{method:'POST',body:permInput.value});if(!r.ok)throw Error(await r.text());selectedStrands.clear();await transitionState(await r.json(),'Construct the new permutation graph');status.textContent='Graph replaced.'}catch(e){status.textContent=e.message}}
+async function cyclicallyRelabel(shift){if(mutationPlaying||!currentState||currentState.blank)return;status.textContent='Cyclically relabelling the boundary…';try{const r=await fetch('/relabel',{method:'POST',body:String(shift)});if(!r.ok)throw Error(await r.text());selectedStrands.clear();render(await r.json());status.textContent='Boundary indices shifted by '+(shift>0?'+1':'−1')+'.'}catch(e){status.textContent=e.message}}
+async function swapAllColors(){if(mutationPlaying||!currentState||currentState.blank)return;status.textContent='Swapping black and white vertices…';try{const r=await fetch('/swap-colors',{method:'POST'});if(!r.ok)throw Error(await r.text());selectedStrands.clear();await transitionState(await r.json(),'Swap every black and white internal vertex');status.textContent='All internal vertex colors swapped.'}catch(e){status.textContent=e.message}}
 async function goBack(){if(mutationPlaying)return;status.textContent='Restoring previous graph…';try{const r=await fetch('/undo',{method:'POST'});if(!r.ok)throw Error(await r.text());selectedStrands.clear();await transitionState(await r.json(),'Restore the previous graph');status.textContent='Previous graph restored.'}catch(e){status.textContent=e.message}}
 async function goForward(){if(mutationPlaying)return;status.textContent='Restoring next graph…';try{const r=await fetch('/redo',{method:'POST'});if(!r.ok)throw Error(await r.text());selectedStrands.clear();await transitionState(await r.json(),'Restore the next graph');status.textContent='Next graph restored.'}catch(e){status.textContent=e.message}}
 document.getElementById('draw').addEventListener('click',drawPermutation);permInput.addEventListener('keydown',e=>{if(e.key==='Enter')drawPermutation()});
 backButton.addEventListener('click',goBack);
 forwardButton.addEventListener('click',goForward);
+viewRotation.addEventListener('input',()=>setViewRotation(viewRotation.value));document.getElementById('reset-rotation').addEventListener('click',()=>setViewRotation(0));indicesMinusButton.addEventListener('click',()=>cyclicallyRelabel(-1));indicesPlusButton.addEventListener('click',()=>cyclicallyRelabel(1));swapColorsButton.addEventListener('click',swapAllColors);
 primalButton.addEventListener('click',()=>{primalVisible=!primalVisible;if(currentState)render(currentState)});dualButton.addEventListener('click',()=>{dualVisible=!dualVisible;if(currentState)render(currentState)});
 facetsToggleButton.addEventListener('click',toggleFacets);
 fVectorToggleButton.addEventListener('click',toggleFVector);
@@ -2698,7 +2789,10 @@ Double-clicking boundary vertex `i` toggles the medial strand originating at
 `i`; selected strands persist across square moves.  The page also provides a
 permutation input, an all-strands toggle, and a copyable face-label sidebar in
 which square labels are red.  The default face-label convention is
-`(:source, :left)`. Back/Forward navigate graph history. **Show facets** lists
+`(:source, :left)`. The Graph transforms panel rotates the full view, cyclically
+relabels boundary indices, or swaps every black and white internal vertex;
+relabeling and color swaps participate in Back/Forward graph history.
+**Show facets** lists
 every codimension-one boundary permutation below the main drawing beside a
 static plabic-graph thumbnail. **Compute f-vector** counts every cell in the
 proper boundary by dimension without drawing descendant graphs. The boundary-
@@ -2783,6 +2877,39 @@ function interactive_plabic_graph(G::PlabicGraph;port=8765,open_browser=true,
                         _interactive_state_json(current[];iterations=iterations,restarts=restarts),
                         true,false)
                     _interactive_animation_json(stages,state)
+                end
+                return HTTP.Response(200,["Content-Type"=>"application/json"],body)
+            catch err
+                return HTTP.Response(400,sprint(showerror,err))
+            end
+        elseif request.method=="POST" && target=="/relabel"
+            has_graph[] || return HTTP.Response(400,"enter and draw a permutation first")
+            try
+                body=lock(guard) do
+                    shift=parse(Int,strip(String(request.body)))
+                    replacement=_cyclically_relabel_plabic_graph(current[],shift)
+                    push!(history,current[])
+                    empty!(future)
+                    current[]=replacement
+                    _interactive_history_json(
+                        _interactive_state_json(replacement;iterations=iterations,restarts=restarts),
+                        true,false)
+                end
+                return HTTP.Response(200,["Content-Type"=>"application/json"],body)
+            catch err
+                return HTTP.Response(400,sprint(showerror,err))
+            end
+        elseif request.method=="POST" && target=="/swap-colors"
+            has_graph[] || return HTTP.Response(400,"enter and draw a permutation first")
+            try
+                body=lock(guard) do
+                    replacement=_swap_plabic_colors(current[])
+                    push!(history,current[])
+                    empty!(future)
+                    current[]=replacement
+                    _interactive_history_json(
+                        _interactive_state_json(replacement;iterations=iterations,restarts=restarts),
+                        true,false)
                 end
                 return HTTP.Response(200,["Content-Type"=>"application/json"],body)
             catch err
@@ -3142,13 +3269,9 @@ function fromNecklaceToDecoratedPermutation(N::Vector{Vector{Int64}})
         end
         
         if I1 == I2
-
-            if i in I1
-                p[i] = -i
-            end
-            if ! (i in I1)
-                p[i] = i
-            end
+            # A fixed element present in every basis is a negatively decorated
+            # coloop; an absent fixed element is a positively decorated loop.
+            p[i] = i in I1 ? -i : i
 
         end
     end
@@ -3170,9 +3293,7 @@ function fromDecoratedPermToNecklace(p::Vector{Int64})
         for i in 1:n
             
             if abs(p[i]) == i
-                if abs(p[i]) == - p[i]
-                    append!(I, [i])
-                end
+                _is_coloop(p,i) && append!(I,[i])
             else 
                 if iCompare(k,n,   abs(p[i]) , i)
                     append!(I, [i])
@@ -3229,7 +3350,7 @@ function _affine_value_from_decorated_perm(p::Vector{Int64}, i::Int64)
     pi = abs(p[i])
 
     if pi == i
-        return p[i] < 0 ? i + n : i
+        return _is_coloop(p,i) ? i+n : i
     end
 
     return pi > i ? pi : pi + n
@@ -3262,7 +3383,6 @@ function reverseGrassmannNecklace(p::Vector{Int64})
 end
 
 
-# This is either wrong or the next function is wrong
 function fromDecoratedPermToPositroid(k::Int64,n::Int64, p::Vector{Int64})
     _validate_decorated_permutation(p)
     length(p) == n || throw(ArgumentError("n=$n does not match the permutation length $(length(p))"))
@@ -3322,11 +3442,13 @@ function draw_chords(p::Vector{Int64})
         end
 
 
-        if  p[i] < 0
+        if _is_coloop(p,i) || _is_loop(p,i)
             Plots.GR.setarrowsize(2)
             x_text = x_coords[i] * 1.2   # Slightly offset the text position
             y_text = y_coords[i] * 1.2
-            Plots.annotate!(x_text, y_text, Plots.text("-", "red", 26))
+            symbol=_is_coloop(p,i) ? "-" : "+"
+            color=_is_coloop(p,i) ? "red" : "blue"
+            Plots.annotate!(x_text,y_text,Plots.text(symbol,color,26))
         end
 
     end
@@ -3399,11 +3521,11 @@ function alignmentNumber(p::Vector{Int64})
                 v = (pi in i_pj_interval) &&  (j in pj_i_interval)
 
                 if (pi == i)
-                    v = v && (p[i] < 0)
+                    v = v && _is_coloop(p,i)
                 end
 
                 if (pj == j)
-                    v = v && (p[j] > 0)
+                    v = v && _is_loop(p,j)
                 end
                 
                 if v 
@@ -3437,22 +3559,24 @@ end
 
 
 function countExceedences(p::Vector{Int64})
-    return sum([( i < abs(p[i])) + (i == - p[i]) for i in 1:size(p)[1]]);
+    return _source_rank(p)
 end
 
 
 
-function is_child(p::Vector{Int64}, q::Vector{Int64})
-    
-    n = size(p)[1]
-    k = countExceedences(p);
-    
-    if countExceedences(q) !=k
+function is_child(p::Vector{Int64},q::Vector{Int64};
+                  permutation_convention::Symbol=:target)
+    source_p=_source_permutation(p,permutation_convention)
+    source_q=_source_permutation(q,permutation_convention)
+    n=length(source_p)
+    k=countExceedences(source_p)
+
+    if countExceedences(source_q)!=k
         return "The two permutations should have the same k";
     end
 
-    Mp = fromDecoratedPermToPositroid(k,n,p)
-    Mq = fromDecoratedPermToPositroid(k,n,q)
+    Mp=fromDecoratedPermToPositroid(k,n,source_p)
+    Mq=fromDecoratedPermToPositroid(k,n,source_q)
 
     return isempty(setdiff(Mp, Mq));
 end
@@ -3466,15 +3590,27 @@ function _decorated_inverse(p::Vector{Int})
     return inverse
 end
 
-"""
-    immediate_children(p)
+function _source_permutation(input::AbstractVector{<:Integer},convention::Symbol)
+    p=Int.(input)
+    _validate_decorated_permutation(p)
+    convention==:target && return _decorated_inverse(p)
+    convention==:source && return p
+    throw(ArgumentError("permutation_convention must be :target or :source"))
+end
 
-Return the codimension-one boundary cells covered by the positroid cell `p`.
-Each result has the same rank and dimension `dimension(p)-1`. The algorithm
-generates the bounded-affine Bruhat covers of the inverse decorated
-permutation, avoiding exhaustive enumeration of every decorated permutation.
-"""
-function immediate_children(input::AbstractVector{<:Integer})
+_display_permutation(source::Vector{Int},convention::Symbol)=
+    convention==:target ? _decorated_inverse(source) :
+    convention==:source ? copy(source) :
+    throw(ArgumentError("permutation_convention must be :target or :source"))
+
+function _target_cell_dimension(input::AbstractVector{<:Integer})
+    source=_decorated_inverse(Int.(input))
+    k=decorated_excedances(source)
+    return dimensionOfPermutation(k,length(source),source)
+end
+
+# Bounded-affine Bruhat covers in the historical source convention.
+function _immediate_children_source(input::AbstractVector{<:Integer})
     p=Int.(input)
     _validate_decorated_permutation(p)
     n=length(p)
@@ -3483,7 +3619,7 @@ function immediate_children(input::AbstractVector{<:Integer})
     dimension==0 && return Vector{Vector{Int}}()
 
     inverse=_decorated_inverse(p)
-    affine=[inverse[i]==-i ? i+n :
+    affine=[_is_coloop(inverse,i) ? i+n :
             (inverse[i]<i ? inverse[i]+n : inverse[i]) for i in 1:n]
     children=Vector{Vector{Int}}()
 
@@ -3513,8 +3649,25 @@ function immediate_children(input::AbstractVector{<:Integer})
     return children
 end
 
-function _boundary_cells_with_dimensions(input::AbstractVector{<:Integer};
-                                          max_cells::Integer=1_000_000)
+"""
+    immediate_children(p; permutation_convention=:target)
+
+Return the codimension-one boundary cells covered by `p`. By default `p` is
+the displayed target/trip permutation used by plabic graphs and face labels;
+the output uses that same convention. Use `permutation_convention=:source`
+only for the package's historical source convention.
+"""
+function immediate_children(input::AbstractVector{<:Integer};
+                            permutation_convention::Symbol=:target)
+    source=_source_permutation(input,permutation_convention)
+    children=_immediate_children_source(source)
+    result=[_display_permutation(child,permutation_convention) for child in children]
+    sort!(result)
+    return result
+end
+
+function _boundary_cells_with_dimensions_source(input::AbstractVector{<:Integer};
+                                                 max_cells::Integer=1_000_000)
     p=Int.(input)
     _validate_decorated_permutation(p)
     max_cells>=0 || throw(ArgumentError("max_cells must be nonnegative"))
@@ -3529,7 +3682,7 @@ function _boundary_cells_with_dimensions(input::AbstractVector{<:Integer};
     while head<=length(frontier)
         current,current_dimension=frontier[head]
         head+=1
-        for child in immediate_children(current)
+        for child in _immediate_children_source(current)
             key=Tuple(child)
             key in seen && continue
             length(cells)<max_cells ||
@@ -3546,40 +3699,362 @@ function _boundary_cells_with_dimensions(input::AbstractVector{<:Integer};
     return cells[order],dimensions[order]
 end
 
+function _boundary_cells_with_dimensions(input::AbstractVector{<:Integer};
+        max_cells::Integer=1_000_000,permutation_convention::Symbol=:target)
+    source=_source_permutation(input,permutation_convention)
+    cells,dimensions=_boundary_cells_with_dimensions_source(
+        source;max_cells=max_cells)
+    displayed=[_display_permutation(cell,permutation_convention) for cell in cells]
+    order=sortperm(eachindex(displayed);by=i->(dimensions[i],Tuple(displayed[i])))
+    return displayed[order],dimensions[order]
+end
+
 """
-    boundary_cells(p; max_cells=1_000_000)
+    boundary_cells(p; max_cells=1_000_000, permutation_convention=:target)
 
 Return every distinct decorated permutation indexing a proper boundary cell of
 the positroid cell `p`. Cells are ordered first by dimension and then
 lexicographically. The input cell itself is excluded. The traversal follows
 codimension-one covers and deduplicates cells reached by different chains.
+The default convention is the target/trip convention used by plabic graphs.
 """
-function boundary_cells(input::AbstractVector{<:Integer};max_cells::Integer=1_000_000)
-    cells,_=_boundary_cells_with_dimensions(input;max_cells=max_cells)
+function boundary_cells(input::AbstractVector{<:Integer};max_cells::Integer=1_000_000,
+                        permutation_convention::Symbol=:target)
+    cells,_=_boundary_cells_with_dimensions(input;max_cells=max_cells,
+        permutation_convention=permutation_convention)
     return cells
 end
 
 """
-    boundary_f_vector(p; include_cell=false, max_cells=1_000_000)
+    boundary_f_vector(p; include_cell=false, max_cells=1_000_000,
+                      permutation_convention=:target)
 
 Return the boundary f-vector `[f₀,f₁,…,f_{d-1}]`, where `fᵢ` is the
 number of `i`-dimensional proper boundary cells and `d` is the dimension of
 `p`. Set `include_cell=true` to append the entry `1` for the original
-`d`-dimensional cell, giving the f-vector of the whole closed cell.
+`d`-dimensional cell, giving the f-vector of the whole closed cell. The default
+convention is the target/trip convention used by plabic graphs and face labels.
 """
 function boundary_f_vector(input::AbstractVector{<:Integer};
-                           include_cell::Bool=false,max_cells::Integer=1_000_000)
-    p=Int.(input)
-    _validate_decorated_permutation(p)
-    k=decorated_excedances(p)
-    dimension=dimensionOfPermutation(k,length(p),p)
-    _,dimensions=_boundary_cells_with_dimensions(p;max_cells=max_cells)
+        include_cell::Bool=false,max_cells::Integer=1_000_000,
+        permutation_convention::Symbol=:target)
+    source=_source_permutation(input,permutation_convention)
+    k=decorated_excedances(source)
+    dimension=dimensionOfPermutation(k,length(source),source)
+    _,dimensions=_boundary_cells_with_dimensions_source(source;max_cells=max_cells)
     counts=zeros(Int,dimension+(include_cell ? 1 : 0))
     for cell_dimension in dimensions
         counts[cell_dimension+1]+=1
     end
     include_cell && (counts[end]=1)
     return counts
+end
+
+const _ProjectionRational = Rational{BigInt}
+
+function _projection_rational(x::Integer)
+    return BigInt(x)//BigInt(1)
+end
+
+function _projection_exact_determinant(A::AbstractMatrix{_ProjectionRational})
+    n=size(A,1)
+    n==size(A,2) || throw(ArgumentError("determinant requires a square matrix"))
+    n==0 && return one(_ProjectionRational)
+    n==1 && return A[1,1]
+    result=zero(_ProjectionRational)
+    for column in 1:n
+        columns=[j for j in 1:n if j!=column]
+        term=A[1,column]*_projection_exact_determinant(A[2:n,columns])
+        result+=isodd(1+column) ? -term : term
+    end
+    return result
+end
+
+function _projection_exact_rank(M::AbstractMatrix{_ProjectionRational})
+    A=Matrix(M)
+    rows,columns=size(A)
+    result=0
+    for column in 1:columns
+        relative=findfirst(i->!iszero(A[i,column]),result+1:rows)
+        relative===nothing && continue
+        pivot=result+relative
+        result+=1
+        if pivot!=result
+            A[result,:],A[pivot,:]=copy(A[pivot,:]),copy(A[result,:])
+        end
+        A[result,:]./=A[result,column]
+        for row in 1:rows
+            row==result && continue
+            iszero(A[row,column]) && continue
+            A[row,:].-=A[row,column].*A[result,:]
+        end
+        result==rows && break
+    end
+    return result
+end
+
+function _projection_chart_derivatives(P::AbstractCellParametrization,
+                                       values::Vector{_ProjectionRational})
+    parameter_count=length(values)
+    k,n=length(P.gauge),length(P.permutation)
+    A=zeros(_ProjectionRational,k,n)
+    derivatives=zeros(_ProjectionRational,k,n,parameter_count)
+    for (row,column) in enumerate(P.gauge)
+        A[row,column]=one(_ProjectionRational)
+    end
+    for (j,(a,b)) in enumerate(_chart_bridges(P)),row in 1:k
+        entry=A[row,a]
+        A[row,b]+=P.signs[j]*values[j]*entry
+        for parameter in 1:parameter_count
+            derivatives[row,b,parameter]+=P.signs[j]*
+                ((parameter==j ? entry : zero(_ProjectionRational))+
+                 values[j]*derivatives[row,a,parameter])
+        end
+    end
+    return A,derivatives
+end
+
+function _projection_jacobian_at(P::AbstractCellParametrization,
+                                 Z::AbstractMatrix{<:Integer},
+                                 values::Vector{_ProjectionRational})
+    A,derivatives=_projection_chart_derivatives(P,values)
+    exact_Z=_projection_rational.(Z)
+    Y=A*exact_Z
+    k,m=size(Y)
+    parameter_count=length(values)
+    projected_derivatives=zeros(_ProjectionRational,k,m,parameter_count)
+    for parameter in 1:parameter_count
+        projected_derivatives[:,:,parameter]=derivatives[:,:,parameter]*exact_Z
+    end
+
+    column_sets=_subsets(Vector(1:m),k)
+    pluckers=_ProjectionRational[]
+    plucker_derivatives=Vector{_ProjectionRational}[]
+    for columns in column_sets
+        minor=Y[:,columns]
+        push!(pluckers,_projection_exact_determinant(minor))
+        differential=zeros(_ProjectionRational,parameter_count)
+        for parameter in 1:parameter_count,row in 1:k
+            differentiated=copy(minor)
+            differentiated[row,:]=projected_derivatives[row,columns,parameter]
+            differential[parameter]+=_projection_exact_determinant(differentiated)
+        end
+        push!(plucker_derivatives,differential)
+    end
+
+    pivot=findfirst(!iszero,pluckers)
+    pivot===nothing && throw(ArgumentError(
+        "C*Z has rank less than $k at the selected positive chart point"))
+    jacobian=zeros(_ProjectionRational,length(pluckers)-1,parameter_count)
+    output_row=0
+    for coordinate in eachindex(pluckers)
+        coordinate==pivot && continue
+        output_row+=1
+        for parameter in 1:parameter_count
+            jacobian[output_row,parameter]=
+                (plucker_derivatives[coordinate][parameter]*pluckers[pivot]-
+                 pluckers[coordinate]*plucker_derivatives[pivot][parameter])/
+                pluckers[pivot]^2
+        end
+    end
+    return _projection_exact_rank(jacobian)
+end
+
+function _projected_plucker_coordinate_count(P::AbstractCellParametrization,
+                                              Z::AbstractMatrix{<:Integer})
+    A=_polynomial_matrix(P)
+    k,n=size(A)
+    size(Z,1)==n || throw(DimensionMismatch(
+        "parametrization has $n columns but Z has $(size(Z,1)) rows"))
+    projected=[_poly_zero() for _ in 1:k,_ in axes(Z,2)]
+    for row in 1:k,column in axes(Z,2),source in 1:n
+        term=_poly_multiply(A[row,source],_poly_constant(Int(Z[source,column])))
+        projected[row,column]=_poly_add(projected[row,column],term)
+    end
+    return count(columns->!isempty(_polynomial_determinant(projected[:,columns])),
+                 _subsets(Vector(axes(Z,2)),k))
+end
+
+function _projection_source_permutation(input::AbstractVector{<:Integer},
+                                        convention::Symbol)
+    return _source_permutation(input,convention)
+end
+
+function _projection_display_permutation(source::Vector{Int},convention::Symbol)
+    return _display_permutation(source,convention)
+end
+
+"""
+    projection_jacobian_report(p, Z; samples=4,
+                               permutation_convention=:target)
+
+Compute the generic differential rank of the map
+`C -> rowspace(C*Z)` on the positive bridge chart of the positroid cell `p`.
+The computation differentiates affine Plucker ratios and evaluates them at
+exact positive rational chart points, so finding full rank is a rigorous
+certificate of generic local injectivity (generic immersivity).
+
+The returned named tuple contains the cell dimension, the largest exact rank
+found, a projective-coordinate upper bound, all sampled ranks, and a
+`certificate` equal to `:full_rank`, `:rank_drop`, or `:inconclusive`.
+Jacobian rank alone does not certify global one-to-one behavior.
+
+By default, `p` uses the rank-`k` target/anti-excedance convention, so the
+example `[4,3,1,5,2]` is treated as a rank-two cell directly. Set
+`permutation_convention=:source` for the package's historical source-trip
+convention.
+"""
+function _projection_jacobian_report_source(
+        p::Vector{Int},Z::AbstractMatrix{<:Integer};samples::Integer=4,
+        permutation::Vector{Int}=copy(p),permutation_convention::Symbol=:source)
+    samples>=1 || throw(ArgumentError("samples must be positive"))
+    n=length(p)
+    k=decorated_excedances(p)
+    size(Z,1)==n || throw(DimensionMismatch(
+        "a Gr($k,$n) representative has $n columns, so Z must have $n rows; "*
+        "received a $(size(Z,1))-by-$(size(Z,2)) matrix"))
+    k<=size(Z,2) || throw(DimensionMismatch(
+        "the target must have at least $k columns to represent Gr($k,m)"))
+
+    P=bridge_parametrization(p)
+    dimension=length(parameter_names(P))
+    sampled_ranks=Int[]
+    for sample in 1:samples
+        values=_ProjectionRational[
+            _projection_rational((parameter+sample)^2+sample)
+            for parameter in 1:dimension]
+        push!(sampled_ranks,_projection_jacobian_at(P,Z,values))
+    end
+    rank=maximum(sampled_ranks)
+    nonzero_coordinates=_projected_plucker_coordinate_count(P,Z)
+    coordinate_bound=max(nonzero_coordinates-1,0)
+    target_dimension=k*(size(Z,2)-k)
+    upper_bound=min(dimension,target_dimension,coordinate_bound)
+    certificate=rank==dimension ? :full_rank :
+                upper_bound<dimension && rank==upper_bound ? :rank_drop :
+                :inconclusive
+    return (permutation=copy(permutation),
+            source_permutation=copy(p),
+            permutation_convention=permutation_convention,
+            rank_k=k,
+            dimension=dimension,
+            jacobian_rank=rank,
+            full_rank=rank==dimension,
+            nonzero_projected_pluckers=nonzero_coordinates,
+            rank_upper_bound=upper_bound,
+            sampled_ranks=sampled_ranks,
+            certificate=certificate)
+end
+
+
+function projection_jacobian_report(
+        input::AbstractVector{<:Integer},Z::AbstractMatrix{<:Integer};
+        samples::Integer=4,permutation_convention::Symbol=:target)
+    source=_projection_source_permutation(input,permutation_convention)
+    display=_projection_display_permutation(source,permutation_convention)
+    return _projection_jacobian_report_source(
+        source,Z;samples=samples,permutation=display,
+        permutation_convention=permutation_convention)
+end
+
+"""
+    boundary_projection_jacobian_report(p, Z; strata=:facets, samples=4,
+                                        max_cells=1_000_000,
+                                        permutation_convention=:target)
+
+Run [`projection_jacobian_report`](@ref) on either the codimension-one facets
+(`strata=:facets`), every proper boundary cell (`strata=:boundary`), or the
+parent together with its full boundary (`strata=:closure`). Results are sorted
+from highest to lowest cell dimension. The default `:target` permutation
+convention agrees with [`projection_jacobian_report`](@ref).
+"""
+function boundary_projection_jacobian_report(
+        input::AbstractVector{<:Integer},Z::AbstractMatrix{<:Integer};
+        strata::Symbol=:facets,samples::Integer=4,max_cells::Integer=1_000_000,
+        permutation_convention::Symbol=:target)
+    p=_projection_source_permutation(input,permutation_convention)
+    cells=if strata==:facets
+        _immediate_children_source(p)
+    elseif strata==:boundary
+        first(_boundary_cells_with_dimensions_source(p;max_cells=max_cells))
+    elseif strata==:closure
+        vcat([p],first(_boundary_cells_with_dimensions_source(
+            p;max_cells=max_cells)))
+    else
+        throw(ArgumentError("strata must be :facets, :boundary, or :closure"))
+    end
+    k=decorated_excedances(p)
+    sort!(cells;by=q->(-dimensionOfPermutation(k,length(p),q),Tuple(q)))
+    return [_projection_jacobian_report_source(
+                q,Z;samples=samples,
+                permutation=_projection_display_permutation(
+                    q,permutation_convention),
+                permutation_convention=permutation_convention)
+            for q in cells]
+end
+
+"""
+    projection_boundary_poset(p, Z; samples=4, max_cells=1_000_000,
+                              permutation_convention=:target)
+
+Build the Hasse diagram of the closed positroid interval below `p`, annotated
+with the projection-Jacobian data for `C -> rowspace(C*Z)`. The returned named
+tuple has:
+
+- `nodes`: one named tuple per open cell, with an integer `id`, a compact
+  `label`, its decorated permutation, dimension, Jacobian rank, and certificate;
+- `covers`: named tuples `(upper, lower)` giving the IDs of all cover edges;
+- `levels`: a dictionary from dimension to the node IDs in that rank; and
+- `f_vector`: the numbers of cells at dimensions `0,1,...,dim(p)`.
+
+The parent is labeled `Pi`, facets are labeled `F1`, `F2`, and so on, and
+lower-dimensional cells are labeled `C<dimension>.<index>`. Displayed
+permutations use the requested convention, which is `:target` by default.
+"""
+function projection_boundary_poset(
+        input::AbstractVector{<:Integer},Z::AbstractMatrix{<:Integer};
+        samples::Integer=4,max_cells::Integer=1_000_000,
+        permutation_convention::Symbol=:target)
+    input_permutation=Int.(input)
+    p=_projection_source_permutation(input_permutation,permutation_convention)
+    reports=boundary_projection_jacobian_report(
+        input_permutation,Z;strata=:closure,samples=samples,max_cells=max_cells,
+        permutation_convention=permutation_convention)
+    parent_dimension=dimensionOfPermutation(
+        decorated_excedances(p),length(p),p)
+    level_counts=Dict{Int,Int}()
+    nodes=NamedTuple[]
+    index=Dict{Tuple,Int}()
+    levels=Dict{Int,Vector{Int}}()
+    for report in reports
+        dimension=report.dimension
+        level_counts[dimension]=get(level_counts,dimension,0)+1
+        number=level_counts[dimension]
+        label=dimension==parent_dimension ? "Pi" :
+              dimension==parent_dimension-1 ? "F$number" :
+              "C$dimension.$number"
+        id=length(nodes)+1
+        node=merge((id=id,label=label,),report)
+        push!(nodes,node)
+        index[Tuple(report.source_permutation)]=id
+        push!(get!(levels,dimension,Int[]),id)
+    end
+
+    covers=NamedTuple{(:upper,:lower),Tuple{Int,Int}}[]
+    for node in nodes
+        for child in _immediate_children_source(node.source_permutation)
+            lower=get(index,Tuple(child),0)
+            lower==0 && continue
+            push!(covers,(upper=node.id,lower=lower))
+        end
+    end
+    sort!(covers;by=edge->(edge.upper,edge.lower))
+    f_vector=[length(get(levels,dimension,Int[]))
+              for dimension in 0:parent_dimension]
+    return (parent=Tuple(input_permutation),source_parent=Tuple(p),
+            permutation_convention=permutation_convention,
+            nodes=nodes,covers=covers,
+            levels=levels,f_vector=f_vector)
 end
 
 function _validate_decorated_permutation(p::Vector{Int64})
@@ -3880,8 +4355,9 @@ end
     decorated_permutations(n, k)
 
 Return all signed-vector encodings of decorated permutations on `1:n` with
-exactly `k` excedances. A negative fixed point contributes one excedance;
-only fixed points may be negative.
+exactly `k` excedances. A negative fixed point is a coloop, contributes one
+excedance, and corresponds to a white lollipop. A positive fixed point is a
+loop and corresponds to a black lollipop. Only fixed points may be negative.
 """
 function decorated_permutations(n::Integer, k::Integer)
     n >= 0 || throw(ArgumentError("n must be nonnegative"))
@@ -3918,9 +4394,9 @@ function decorated_permutations(n::Integer, k::Integer)
     return results
 end
 
-"""Count excedances in the signed-vector encoding of a decorated permutation."""
+"""Count excedances, including every negatively decorated coloop fixed point."""
 function decorated_excedances(p::AbstractVector{<:Integer})
-    count(i -> i < abs(p[i]) || p[i] == -i, eachindex(p))
+    _source_rank(p)
 end
 
 include("web_server.jl")
